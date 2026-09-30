@@ -4,6 +4,16 @@ Implementació en C, sense frameworks ni memòria compartida. Cada procés conse
 una còpia de l'enter, inicialment 0. El node 0 coordina els torns i també executa
 les seves 10 iteracions com a lector o escriptor.
 
+## Sockets en Linux
+
+La implementació utilitza l'API de sockets POSIX de Linux, seguint el material
+`Tema5.4.Sockets.pdf` (pàgines 14–24 i 29). Els sockets són descriptors `int`.
+El servidor segueix `socket → bind → listen → accept`, i els clients fan
+`socket → connect`. Les adreces IPv4 es converteixen amb `inet_pton` i els ports
+amb `htons`. La comunicació TCP utilitza `read` i `write`, repetint les operacions
+fins a completar la trama; una lectura de 0 bytes indica desconnexió.
+Els descriptors es tanquen amb `close`.
+
 ## Compilar i executar
 
 Linux / servidor de classe:
@@ -14,12 +24,6 @@ make
 gcc -std=c99 -Wall -Wextra -Werror -pedantic main.c config.c xarxa.c -o distribuida
 ```
 
-Windows amb MinGW:
-
-```powershell
-gcc -std=c99 -Wall -Wextra -Werror -pedantic main.c config.c xarxa.c -o distribuida.exe -lws2_32
-```
-
 Obre tres terminals i executa, un procés a cadascun:
 
 ```sh
@@ -28,7 +32,6 @@ Obre tres terminals i executa, un procés a cadascun:
 ./distribuida 2 127.0.0.1 5002 READ_WRITE 0 127.0.0.1 5000 1 127.0.0.1 5001
 ```
 
-En PowerShell substitueix `./distribuida` per `.\distribuida.exe`.
 És preferible arrencar el 0 primer. Els clients reintenten la connexió inicial
 100 vegades amb pauses de 100 ms; el temps real pot ser superior si `connect`
 es bloqueja per una xarxa inaccessible. La barrera READY/START espera tots els
@@ -40,7 +43,7 @@ Un únic procés també és vàlid: `./distribuida 0 127.0.0.1 5000 READ_WRITE`.
 Els IDs poden ser no consecutius; el coordinador sempre és el 0. Les llistes de
 servidors, connexions i peticions es reserven dinàmicament segons els arguments:
 no hi ha un màxim propi de 32 participants. Es manté el límit de `select` del
-sistema (`FD_SETSIZE`; en POSIX també limita el número del descriptor).
+sistema (`FD_SETSIZE`, que també limita el número del descriptor).
 Tots han d'utilitzar una configuració coherent; el 0 ha de llistar tots els participants.
 
 ## Algorisme i relació amb els apunts
@@ -148,7 +151,7 @@ Només UPDATE canvia la variable compartida. VALUE retorna una lectura;
 READY/START/REQUEST/GRANT/ACK/RELEASE/DONE/STOP només coordinen. No s'envia el mode del node
 ni existeix cap trama INCREMENT. Les lectures/escriptures pròpies del node 0
 són locals i segueixen el mateix torn exclusiu; la seva escriptura es replica
-per sockets. `send` i `recv` es repeteixen fins a completar una trama, perquè
+per sockets. `write` i `read` es repeteixen fins a completar una trama, perquè
 TCP no preserva fronteres de missatge.
 
 ## Sortida del terminal
@@ -166,31 +169,27 @@ Els lectors mostren `Nomes lectura`. Els valors intermedis depenen de l'ordre
 d'accés; el valor final apareix quan tots els nodes han acabat.
 
 Les traces tècniques estan desactivades per defecte. Per activar-les només al
-terminal on vulguis investigar els missatges (PowerShell):
+terminal on vulguis investigar els missatges:
 
-```powershell
-$env:DISTRIBUIDA_TRACES = "1"
+```sh
+export DISTRIBUIDA_TRACES=1
 # Executa el node amb la mateixa comanda habitual.
 ```
 
 Per tornar a la sortida clara:
 
-```powershell
-$env:DISTRIBUIDA_TRACES = "0"
+```sh
+unset DISTRIBUIDA_TRACES
 ```
 
-En Linux, posa `DISTRIBUIDA_TRACES=1` davant la comanda del node. Les proves
-d'integració activen les traces automàticament per comprovar Lamport i FIFO;
+Les proves d'integració activen les traces automàticament per comprovar Lamport i FIFO;
 també hi ha una prova del grup mixt sense traces per validar la sortida normal.
 
 ## Proves i visualització
 
 ```sh
-python tests/integracio.py ./distribuida
-python tests/peticions.py ./distribuida
-# Windows:
-python tests/integracio.py ./distribuida.exe
-python tests/peticions.py ./distribuida.exe
+python3 tests/integracio.py ./distribuida
+python3 tests/peticions.py ./distribuida
 ```
 
 Les proves comproven arguments invàlids, desconnexió, trames fragmentades,
@@ -217,7 +216,7 @@ coordinador abans de conèixer l'ID del READY entrant. Els temps són relatius a
 i no s'han de comparar entre nodes; Lamport tampoc mesura durades.
 
 ```sh
-python tests/visualitzar.py output/mixt/traces.csv
+python3 tests/visualitzar.py output/mixt/traces.csv
 ```
 
 Genera un SVG amb les lectures per node i el nombre de trames per tipus.

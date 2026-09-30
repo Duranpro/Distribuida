@@ -3,9 +3,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifdef _WIN32
-#include <windows.h>
-#else
 #include <unistd.h>
 #include <errno.h>
 #include <signal.h>
@@ -13,32 +10,20 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <sys/select.h>
-#endif
 
 int rellotge = 0, node = 0, mostrar_traces = 0;
 char *noms_trames[] = {
     "INVALID", "READY", "START", "GRANT", "READ", "VALUE", "UPDATE",
     "ACK", "RELEASE", "STOP", "REQUEST", "DONE"
 };
-#ifdef _WIN32
-LARGE_INTEGER inici = {0}, frequencia = {0};
-#else
 struct timespec inici = {0};
-#endif
 
 int temps_ms(void) {
-#ifdef _WIN32
-    LARGE_INTEGER instant = {0};
-
-    QueryPerformanceCounter(&instant);
-    return (int)((instant.QuadPart - inici.QuadPart) * 1000 / frequencia.QuadPart);
-#else
     struct timespec instant = {0};
 
     clock_gettime(CLOCK_MONOTONIC, &instant);
     return (int)((instant.tv_sec - inici.tv_sec) * 1000 +
                  (instant.tv_nsec - inici.tv_nsec) / 1000000);
-#endif
 }
 
 void registrar(char *accio, int altre_node, char *tipus, int valor) {
@@ -54,9 +39,6 @@ void registrar_local(char *accio, int valor) {
 
 int iniciar_xarxa(int identificador) {
     char *opcio_traces = NULL;
-#ifdef _WIN32
-    WSADATA dades = {0};
-#endif
 
     node = identificador;
     opcio_traces = getenv("DISTRIBUIDA_TRACES");
@@ -67,63 +49,35 @@ int iniciar_xarxa(int identificador) {
     if (sizeof(unsigned int) != 4) {
         return -1;
     }
-#ifdef _WIN32
-    if (WSAStartup(MAKEWORD(2, 2), &dades) != 0) {
-        return -1;
-    }
-    QueryPerformanceFrequency(&frequencia);
-    QueryPerformanceCounter(&inici);
-#else
     signal(SIGPIPE, SIG_IGN);
     clock_gettime(CLOCK_MONOTONIC, &inici);
-#endif
     return 0;
 }
 
-void acabar_xarxa(void) {
-#ifdef _WIN32
-    WSACleanup();
-#endif
-}
-
-void tancar_socket(Socket connexio) {
+void tancar_socket(int connexio) {
     if (connexio == SOCKET_INVALID) {
         return;
     }
-#ifdef _WIN32
-    closesocket(connexio);
-#else
     close(connexio);
-#endif
 }
 
 void pausa_ms(int durada) {
-#ifndef _WIN32
     struct timespec pausa = {0};
-#endif
 
-#ifdef _WIN32
-    Sleep(durada);
-#else
     pausa.tv_sec = durada / 1000;
     pausa.tv_nsec = (durada % 1000) * 1000000;
     while (nanosleep(&pausa, &pausa) == -1 && errno == EINTR) {
     }
-#endif
 }
 
 int interromput(void) {
-#ifdef _WIN32
-    return WSAGetLastError() == WSAEINTR;
-#else
     return errno == EINTR;
-#endif
 }
 
 /* El temporitzador no impedeix rebre les repliques dels altres nodes. */
-int esperar_sockets(Socket *connexions, int nombre, int espera_ms, int *preparats) {
+int esperar_sockets(int *connexions, int nombre, int espera_ms, int *preparats) {
     int i = 0, resultat = 0;
-    Socket maxim = 0;
+    int maxim = 0;
     fd_set lectura;
     struct timeval espera = {0};
 
@@ -138,11 +92,9 @@ int esperar_sockets(Socket *connexions, int nombre, int espera_ms, int *preparat
     FD_ZERO(&lectura);
     for (i = 0; i < nombre; ++i) {
         preparats[i] = 0;
-#ifndef _WIN32
         if (connexions[i] < 0 || connexions[i] >= FD_SETSIZE) {
             return -1;
         }
-#endif
         FD_SET(connexions[i], &lectura);
         if (connexions[i] > maxim) {
             maxim = connexions[i];
@@ -150,7 +102,7 @@ int esperar_sockets(Socket *connexions, int nombre, int espera_ms, int *preparat
     }
     espera.tv_sec = espera_ms / 1000;
     espera.tv_usec = (espera_ms % 1000) * 1000;
-    resultat = select((int)maxim + 1, &lectura, NULL, NULL, &espera);
+    resultat = select(maxim + 1, &lectura, NULL, NULL, &espera);
     if (resultat < 0) {
         if (interromput()) {
             return 0;
@@ -163,23 +115,22 @@ int esperar_sockets(Socket *connexions, int nombre, int espera_ms, int *preparat
     return resultat;
 }
 
-Socket crear_socket_servidor(Configuracio *configuracio) {
+int crear_socket_servidor(Configuracio *configuracio) {
     int activat = 1;
-    Socket connexio = SOCKET_INVALID;
+    int connexio = SOCKET_INVALID;
     struct sockaddr_in adreca = {0};
 
     connexio = socket(AF_INET, SOCK_STREAM, 0);
     if (connexio == SOCKET_INVALID) {
         return connexio;
     }
-#ifndef _WIN32
-    setsockopt(connexio, SOL_SOCKET, SO_REUSEADDR, (char *)&activat, sizeof(activat));
-#else
-    setsockopt(connexio, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (char *)&activat, sizeof(activat));
-#endif
+    setsockopt(connexio, SOL_SOCKET, SO_REUSEADDR, &activat, sizeof(activat));
     adreca.sin_family = AF_INET;
     adreca.sin_port = htons(configuracio->propi.port);
-    adreca.sin_addr.s_addr = inet_addr(configuracio->propi.ip);
+    if (inet_pton(AF_INET, configuracio->propi.ip, &adreca.sin_addr) != 1) {
+        tancar_socket(connexio);
+        return SOCKET_INVALID;
+    }
     if (bind(connexio, (struct sockaddr *)&adreca, sizeof(adreca)) != 0 || listen(connexio, SOMAXCONN) != 0) {
         tancar_socket(connexio);
         return SOCKET_INVALID;
@@ -187,8 +138,8 @@ Socket crear_socket_servidor(Configuracio *configuracio) {
     return connexio;
 }
 
-Socket acceptar_connexio(Socket servidor) {
-    Socket connexio = SOCKET_INVALID;
+int acceptar_connexio(int servidor) {
+    int connexio = SOCKET_INVALID;
 
     do {
         connexio = accept(servidor, NULL, NULL);
@@ -196,14 +147,16 @@ Socket acceptar_connexio(Socket servidor) {
     return connexio;
 }
 
-Socket connectar_servidor(Servidor *servidor) {
+int connectar_servidor(Servidor *servidor) {
     int intent = 0;
-    Socket connexio = SOCKET_INVALID;
+    int connexio = SOCKET_INVALID;
     struct sockaddr_in adreca = {0};
 
     adreca.sin_family = AF_INET;
     adreca.sin_port = htons(servidor->port);
-    adreca.sin_addr.s_addr = inet_addr(servidor->ip);
+    if (inet_pton(AF_INET, servidor->ip, &adreca.sin_addr) != 1) {
+        return SOCKET_INVALID;
+    }
     for (intent = 0; intent < 100; ++intent) {
         connexio = socket(AF_INET, SOCK_STREAM, 0);
         if (connexio == SOCKET_INVALID) {
@@ -219,14 +172,14 @@ Socket connectar_servidor(Servidor *servidor) {
 }
 
 /* TCP pot transferir nomes una part dels bytes demanats. */
-int transferir(Socket connexio, char *dades, int mida, int enviament) {
+int transferir(int connexio, char *dades, int mida, int enviament) {
     int total = 0, quantitat = 0;
 
     while (total < mida) {
         if (enviament) {
-            quantitat = send(connexio, dades + total, mida - total, 0);
+            quantitat = write(connexio, dades + total, mida - total);
         } else {
-            quantitat = recv(connexio, dades + total, mida - total, 0);
+            quantitat = read(connexio, dades + total, mida - total);
         }
         if (quantitat < 0 && interromput()) {
             continue;
@@ -239,7 +192,7 @@ int transferir(Socket connexio, char *dades, int mida, int enviament) {
     return 0;
 }
 
-int enviar_trama(Socket connexio, int desti, TipusTrama tipus, int valor) {
+int enviar_trama(int connexio, int desti, TipusTrama tipus, int valor) {
     unsigned int dades[3] = {0};
 
     ++rellotge;
@@ -253,7 +206,7 @@ int enviar_trama(Socket connexio, int desti, TipusTrama tipus, int valor) {
     return 0;
 }
 
-int rebre_trama(Socket connexio, int origen, Trama *trama) {
+int rebre_trama(int connexio, int origen, Trama *trama) {
     unsigned int dades[3] = {0};
     int remot = 0, tipus = 0, valor = 0;
 

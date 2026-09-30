@@ -7,13 +7,13 @@
 enum { LLIURE, EN_CUA, ACTIU, ACABAT };
 typedef struct {
     Configuracio *configuracio;
-    Socket *connexions, escolta;
+    int *connexions, escolta;
     int *estat, *iteracions, *cua;
     int inici, nombre, acabats;
 
 } Central;
 
-int esperar(Socket connexio, int id, TipusTrama tipus, Trama *trama) {
+int esperar(int connexio, int id, TipusTrama tipus, Trama *trama) {
     if (rebre_trama(connexio, id, trama) != 0 || trama->tipus != tipus) {
         fprintf(stderr, "Node %d: connexio tancada o trama inesperada (%d esperada).\n",
                 id, tipus);
@@ -107,7 +107,7 @@ int torn_local(Central *central) {
 
 int torn_remot(Central *central, int posicio) {
     Configuracio *configuracio = central->configuracio;
-    Socket connexio = central->connexions[posicio];
+    int connexio = central->connexions[posicio];
     int id = id_node(central, posicio);
     Trama trama = {0};
 
@@ -142,7 +142,7 @@ int temps_espera(int venciment) {
 int executar_coordinador(Central *central, int *preparats) {
     int i = 0, j = 0, posicio = 0, espera = 0, resultat_torn = 0;
     int participants = central->configuracio->nombre_altres_servidors, seguent = 0;
-    Socket connexio = SOCKET_INVALID;
+    int connexio = SOCKET_INVALID;
     Trama trama = {0};
 
     printf("Esperant %d nodes...\n", participants);
@@ -248,7 +248,7 @@ int coordinador(Configuracio *configuracio) {
 
     central.configuracio = configuracio;
     central.escolta = SOCKET_INVALID;
-    central.connexions = malloc((participants + 1) * sizeof(Socket));
+    central.connexions = malloc((participants + 1) * sizeof(int));
     central.estat = calloc(participants + 1, sizeof(int));
     central.iteracions = calloc(participants + 1, sizeof(int));
     central.cua = malloc((participants + 1) * sizeof(int));
@@ -280,7 +280,7 @@ int coordinador(Configuracio *configuracio) {
     return resultat;
 }
 
-int executar_participant(Configuracio *configuracio, Socket connexio) {
+int executar_participant(Configuracio *configuracio, int connexio) {
     int iteracio = 0, demanat = 0, acabat = 0;
     int preparat = 0, seguent = 0, espera = 0, valor_llegit = 0;
     Trama trama = {0};
@@ -366,7 +366,7 @@ int executar_participant(Configuracio *configuracio, Socket connexio) {
 
 int participant(Configuracio *configuracio) {
     int i = 0, resultat = -1;
-    Socket connexio = SOCKET_INVALID;
+    int connexio = SOCKET_INVALID;
     Servidor *central = NULL;
 
     for (i = 0; i < configuracio->nombre_altres_servidors; ++i) {
@@ -409,7 +409,6 @@ int main(int quantitat_arguments, char *arguments[]) {
     } else {
         fprintf(stderr, "Execucio interrompuda: error de xarxa o de protocol.\n");
     }
-    acabar_xarxa();
     free(configuracio.altres_servidors);
     if (resultat != 0) {
         return 1;
