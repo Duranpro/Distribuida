@@ -4,19 +4,26 @@
 #include "xarxa.h"
 
 /* Un unic fil per proces. select permet servir repliques durant la pausa. */
-enum { LLIURE, EN_CUA, ACTIU, ACABAT };
+#define LLIURE 0
+#define EN_CUA 1
+#define ACTIU 2
+#define ACABAT 3
 typedef struct {
     Configuracio *configuracio;
-    int *connexions, escolta;
-    int *estat, *iteracions, *cua;
-    int inici, nombre, acabats;
+    int *connexions;
+    int escolta;
+    int *estat;
+    int *iteracions;
+    int *cua;
+    int inici;
+    int nombre;
+    int acabats;
 
 } Central;
 
 int esperar(int connexio, int id, TipusTrama tipus, Trama *trama) {
     if (rebre_trama(connexio, id, trama) != 0 || trama->tipus != tipus) {
-        fprintf(stderr, "Node %d: connexio tancada o trama inesperada (%d esperada).\n",
-                id, tipus);
+        fprintf(stderr, "Node %d: connexio tancada o trama inesperada (%d esperada).\n", id, tipus);
         return -1;
     }
     return 0;
@@ -51,8 +58,8 @@ int gestionar_peticio(Central *central, int posicio, Trama *trama) {
     }
     return -1;
 }
-/* Una peticio pot haver creuat l'UPDATE de replicacio. Cal encuar-la abans
-   de continuar esperant l'ACK, en lloc de confondre-la amb la confirmacio. */
+
+// Una peticio pot haver creuat l'UPDATE de replicacio. Cal encuar-la abans de continuar esperant l'ACK, en lloc de confondre-la amb la confirmacio.
 int esperar_confirmacio(Central *central, int posicio) {
     Trama trama = {0};
 
@@ -82,11 +89,13 @@ int replicar(Central *central, int escriptor) {
 }
 
 void mostrar_iteracio(Configuracio *configuracio, int iteracio, int valor_llegit) {
+    printf("\n---------------- RESULTAT ----------------\n");
     if (configuracio->tipus == READ_WRITE) {
         printf("Iteracio %2d/%d | Llegit: %3d | Escrit: %3d (confirmat)\n", iteracio, ITERACIONS, valor_llegit, configuracio->valor_local);
     } else {
         printf("Iteracio %2d/%d | Llegit: %3d | Nomes lectura\n", iteracio, ITERACIONS, valor_llegit);
     }
+    printf("------------------------------------------\n\n");
 }
 
 int torn_local(Central *central) {
@@ -187,8 +196,8 @@ int executar_coordinador(Central *central, int *preparats) {
         if (esperar_sockets(central->connexions, participants, espera, preparats) < 0) {
             return -1;
         }
-        /* FIFO segons l'ordre en que el coordinador rep les peticions.
-           Si diversos sockets estan preparats, es desempata per la llista. */
+
+        // FIFO segons l'ordre en que el coordinador rep les peticions. Si diversos sockets estan preparats, es desempata per la llista.
         for (i = 0; i < participants; ++i) {
             if (!preparats[i]) {
                 continue;
@@ -197,7 +206,8 @@ int executar_coordinador(Central *central, int *preparats) {
                 return -1;
             }
         }
-        /* El 0 te el seu propi temporitzador i entra a la mateixa cua. */
+        
+        // El 0 te el seu propi temporitzador i entra a la mateixa cua.
         if (central->estat[participants] == LLIURE && temps_ms() >= seguent) {
             if (central->iteracions[participants] == ITERACIONS) {
                 central->estat[participants] = ACABAT;
@@ -217,6 +227,9 @@ int executar_coordinador(Central *central, int *preparats) {
         central->inici = (central->inici + 1) % (participants + 1);
         --central->nombre;
         central->estat[posicio] = ACTIU;
+        printf("\n==========================================\n"
+               "TORN DEL NODE %d | ITERACIO %d/%d\n"
+               "==========================================\n", id_node(central, posicio), central->iteracions[posicio] + 1, ITERACIONS);
         registrar_local("CONCEDIR", id_node(central, posicio));
         if (posicio == participants) {
             resultat_torn = torn_local(central);
@@ -229,6 +242,7 @@ int executar_coordinador(Central *central, int *preparats) {
         ++central->iteracions[posicio];
         central->estat[posicio] = LLIURE;
         registrar_local("ALLIBERAR", id_node(central, posicio));
+        printf("-------------- FINAL DEL TORN ------------\n\n");
         if (posicio == participants) {
             seguent = temps_ms() + 1000;
         }
@@ -300,6 +314,9 @@ int executar_participant(Configuracio *configuracio, int connexio) {
                 acabat = 1;
                 printf("\nIteracions acabades. Esperant que acabin els altres nodes...\n");
             } else {
+                printf("\n==========================================\n"
+                       "NODE %d | INICI ITERACIO %d/%d\n"
+                       "==========================================\n", configuracio->propi.id, iteracio + 1, ITERACIONS);
                 if (enviar_trama(connexio, 0, REQUEST, iteracio + 1) != 0) {
                     return -1;
                 }
@@ -405,7 +422,11 @@ int main(int quantitat_arguments, char *arguments[]) {
         resultat = participant(&configuracio);
     }
     if (resultat == 0) {
-        printf("\nNode %d: execucio completada.\nIteracions: %d/%d\nValor final compartit: %d\n", configuracio.propi.id, ITERACIONS, ITERACIONS, configuracio.valor_local);
+        printf("\n==========================================\n"
+               "RESULTAT FINAL\n"
+               "==========================================\n"
+               "Node %d: execucio completada.\nIteracions: %d/%d\nValor final compartit: %d\n"
+               "==========================================\n", configuracio.propi.id, ITERACIONS, ITERACIONS, configuracio.valor_local);
     } else {
         fprintf(stderr, "Execucio interrompuda: error de xarxa o de protocol.\n");
     }

@@ -1,7 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "xarxa.h"
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
@@ -11,7 +10,7 @@
 #include <sys/socket.h>
 #include <sys/select.h>
 
-int rellotge = 0, node = 0, mostrar_traces = 0;
+int rellotge = 0, node = 0;
 char *noms_trames[] = {
     "INVALID", "READY", "START", "GRANT", "READ", "VALUE", "UPDATE",
     "ACK", "RELEASE", "STOP", "REQUEST", "DONE"
@@ -22,13 +21,37 @@ int temps_ms(void) {
     struct timespec instant = {0};
 
     clock_gettime(CLOCK_MONOTONIC, &instant);
-    return (int)((instant.tv_sec - inici.tv_sec) * 1000 +
-                 (instant.tv_nsec - inici.tv_nsec) / 1000000);
+    return (int)((instant.tv_sec - inici.tv_sec) * 1000 + (instant.tv_nsec - inici.tv_nsec) / 1000000);
 }
 
 void registrar(char *accio, int altre_node, char *tipus, int valor) {
-    if (mostrar_traces) {
-        printf("TRACE,%d,%d,%d,%s,%d,%s,%d\n", node, temps_ms(), rellotge, accio, altre_node, tipus, valor);
+    printf("[Node %d | %d ms | Lamport %d] ", node, temps_ms(), rellotge);
+    if (strcmp(accio, "SEND") == 0) {
+        printf("Envia %s al node %d | valor: %d\n", tipus, altre_node, valor);
+    } else if (strcmp(accio, "RECV") == 0) {
+        if (altre_node < 0) {
+            printf("Rep %s d'un node pendent d'identificar | valor: %d\n", tipus, valor);
+        } else {
+            printf("Rep %s del node %d | valor: %d\n", tipus, altre_node, valor);
+        }
+    } else if (strcmp(tipus, "ENCUAR") == 0) {
+        printf("Posa el node %d a la cua\n", valor);
+    } else if (strcmp(tipus, "CONCEDIR") == 0) {
+        printf("Concedeix el torn al node %d\n", valor);
+    } else if (strcmp(tipus, "ALLIBERAR") == 0) {
+        printf("El node %d allibera el torn\n", valor);
+    } else if (strcmp(tipus, "READ") == 0) {
+        printf("Llegeix el valor local: %d\n", valor);
+    } else if (strcmp(tipus, "UPDATE") == 0 || strcmp(tipus, "APLICAR") == 0) {
+        printf("Actualitza el valor local a %d\n", valor);
+    } else if (strcmp(tipus, "CALCULAR") == 0) {
+        printf("Calcula el nou valor: %d\n", valor);
+    } else if (strcmp(tipus, "REQUEST") == 0) {
+        printf("Demana torn per a la iteracio %d\n", valor);
+    } else if (strcmp(tipus, "DONE") == 0) {
+        printf("Ha acabat totes les iteracions\n");
+    } else {
+        printf("Accio local %s | valor: %d\n", tipus, valor);
     }
 }
 
@@ -38,13 +61,7 @@ void registrar_local(char *accio, int valor) {
 }
 
 int iniciar_xarxa(int identificador) {
-    char *opcio_traces = NULL;
-
     node = identificador;
-    opcio_traces = getenv("DISTRIBUIDA_TRACES");
-    if (opcio_traces != NULL && strcmp(opcio_traces, "1") == 0) {
-        mostrar_traces = 1;
-    }
     /* Les trames utilitzen tres enters de 4 bytes. */
     if (sizeof(unsigned int) != 4) {
         return -1;

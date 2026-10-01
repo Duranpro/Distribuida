@@ -168,22 +168,24 @@ Iteracio  2/10 | Llegit:   2 | Escrit:   3 (confirmat)
 Els lectors mostren `Nomes lectura`. Els valors intermedis depenen de l'ordre
 d'accés; el valor final apareix quan tots els nodes han acabat.
 
-Les traces tècniques estan desactivades per defecte. Per activar-les només al
-terminal on vulguis investigar els missatges:
+Les traces es mostren sempre, amb un format llegible, sense configurar cap
+variable d'entorn:
 
-```sh
-export DISTRIBUIDA_TRACES=1
-# Executa el node amb la mateixa comanda habitual.
+```text
+[Node 1 | 12 ms | Lamport 4] Envia REQUEST al node 0 | valor: 1
+[Node 0 | 15 ms | Lamport 5] Rep REQUEST del node 1 | valor: 1
+[Node 0 | 15 ms | Lamport 6] Posa el node 1 a la cua
+[Node 0 | 15 ms | Lamport 7] Concedeix el torn al node 1
 ```
 
-Per tornar a la sortida clara:
+Cada línia indica el node, els mil·lisegons des de l'inici local de la xarxa,
+el rellotge de Lamport i l'acció. Els temps són relatius a cada procés;
+Lamport indica ordre lògic, no durada. Els tipus de missatge es conserven
+per poder seguir el protocol: REQUEST demana torn, GRANT el concedeix,
+UPDATE replica el valor i ACK confirma la recepció.
 
-```sh
-unset DISTRIBUIDA_TRACES
-```
-
-Les proves d'integració activen les traces automàticament per comprovar Lamport i FIFO;
-també hi ha una prova del grup mixt sense traces per validar la sortida normal.
+El format anterior TRACE en CSV s'ha substituït per aquest format llegible.
+Les eines externes que analitzin el CSV s'han d'adaptar a la nova sortida.
 
 ## Proves i visualització
 

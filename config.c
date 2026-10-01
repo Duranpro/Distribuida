@@ -5,12 +5,13 @@
 #include <limits.h>
 #include "config.h"
 
-/* strtol permet distingir un zero d'un argument que no es numeric. */
 int llegir_enter(char *text, int minim, int maxim, int *valor) {
     char *final = NULL;
     long numero = 0;
 
     errno = 0;
+    
+    // strtol permet distingir un zero d'un argument que no es numeric.
     numero = strtol(text, &final, 10);
     if (errno != 0 || *text == '\0' || *final != '\0' || numero < minim || numero > maxim) {
         return -1;
@@ -27,8 +28,7 @@ int llegir_servidor(char **arguments, Servidor *servidor) {
     if (llegir_enter(arguments[0], 0, INT_MAX, &servidor->id) != 0 || llegir_enter(arguments[2], 1, 65535, &servidor->port) != 0) {
         return -1;
     }
-    camps = sscanf(servidor->ip, "%d.%d.%d.%d%c",
-                   &primer, &segon, &tercer, &quart, &sobrant);
+    camps = sscanf(servidor->ip, "%d.%d.%d.%d%c", &primer, &segon, &tercer, &quart, &sobrant);
     if (camps != 4 || primer < 0 || primer > 255 || segon < 0 || segon > 255 || tercer < 0 || tercer > 255 || quart < 0 || quart > 255 || strcmp(servidor->ip, "255.255.255.255") == 0) {
         return -1;
     }
@@ -40,8 +40,7 @@ int llegir_arguments(int quantitat_arguments, char *arguments[], Configuracio *c
     Servidor *servidor = NULL, *anterior = NULL;
 
     if (quantitat_arguments < 5 || (quantitat_arguments - 5) % 3 != 0) {
-        fprintf(stderr, "Us: %s ID IPv4 PORT READ_ONLY|READ_WRITE [ID IPv4 PORT] ...\n",
-                arguments[0]);
+        fprintf(stderr, "Us: %s ID IPv4 PORT READ_ONLY|READ_WRITE [ID IPv4 PORT] ...\n", arguments[0]);
         return -1;
     }
     if (llegir_servidor(arguments + 1, &configuracio->propi) != 0) {
