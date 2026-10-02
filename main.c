@@ -91,9 +91,9 @@ int replicar(Central *central, int escriptor) {
 void mostrar_iteracio(Configuracio *configuracio, int iteracio, int valor_llegit) {
     printf("\n---------------- RESULTAT ----------------\n");
     if (configuracio->tipus == READ_WRITE) {
-        printf("Iteracio %2d/%d | Llegit: %3d | Escrit: %3d (confirmat)\n", iteracio, ITERACIONS, valor_llegit, configuracio->valor_local);
+        printf("Iteracio %d/%d | Llegit: %d | Escrit: %d (confirmat)\n", iteracio, ITERACIONS, valor_llegit, configuracio->valor_local);
     } else {
-        printf("Iteracio %2d/%d | Llegit: %3d | Nomes lectura\n", iteracio, ITERACIONS, valor_llegit);
+        printf("Iteracio %d/%d | Llegit: %d | Nomes lectura\n", iteracio, ITERACIONS, valor_llegit);
     }
     printf("------------------------------------------\n\n");
 }
