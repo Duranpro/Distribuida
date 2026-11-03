@@ -2,22 +2,20 @@
 #include "comu.h"
 #include <unistd.h>
 #include <errno.h>
-#include <time.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
 
 int crear_servidor(int port) {
-    int connexio = -1, activat = 1;
+    int connexio = -1;
     struct sockaddr_in adreca = {0};
 
     connexio = socket(AF_INET, SOCK_STREAM, 0);
     if (connexio < 0) {
         return -1;
     }
-    setsockopt(connexio, SOL_SOCKET, SO_REUSEADDR, &activat, sizeof(activat));
     adreca.sin_family = AF_INET;
     adreca.sin_port = htons(port);
-    adreca.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    adreca.sin_addr.s_addr = inet_addr("127.0.0.1");
     if (bind(connexio, (struct sockaddr *)&adreca, sizeof(adreca)) < 0 || listen(connexio, 4) < 0) {
         close(connexio);
         return -1;
@@ -28,13 +26,12 @@ int crear_servidor(int port) {
 int connectar(int port) {
     int connexio = -1, intent = 0;
     struct sockaddr_in adreca = {0};
-    struct timespec pausa = {0, 100000000};
 
     adreca.sin_family = AF_INET;
     adreca.sin_port = htons(port);
-    adreca.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    adreca.sin_addr.s_addr = inet_addr("127.0.0.1");
     /* Dona temps als altres programes per obrir els seus servidors. */
-    for (intent = 0; intent < 100; intent++) {
+    for (intent = 0; intent <= 10; intent++) {
         connexio = socket(AF_INET, SOCK_STREAM, 0);
         if (connexio < 0) {
             return -1;
@@ -43,7 +40,9 @@ int connectar(int port) {
             return connexio;
         }
         close(connexio);
-        nanosleep(&pausa, NULL);
+        if (intent < 10) {
+            sleep(1);
+        }
     }
     return -1;
 }

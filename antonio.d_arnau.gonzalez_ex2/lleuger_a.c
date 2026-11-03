@@ -120,8 +120,8 @@ int executar_lleuger_a(RecursosLleuger *recursos) {
         }
         if (demanant && pot_entrar(&rellotge, cua, confirmacions)) {
             /* Durant aquest bloc, els missatges queden pendents als sockets. */
+            mida = snprintf(text, sizeof(text), "I'm lightweight process A%d\n", IDENTIFICADOR + 1);
             for (i = 0; i < 10; i++) {
-                mida = snprintf(text, sizeof(text), "I'm lightweight process A%d\n", IDENTIFICADOR + 1);
                 write(STDOUT_FILENO, text, mida);
                 sleep(1);
             }
@@ -142,16 +142,19 @@ int executar_lleuger_a(RecursosLleuger *recursos) {
 }
 
 int main(int nombre_arguments, char **arguments) {
-    int i = 0, resultat = 0;
+    int i = 0, resultat = 0, mida = 0;
+    char text[128] = {0};
     RecursosLleuger recursos = {-1, -1, -1, {-1, -1, -1}};
 
     (void)arguments;
     if (nombre_arguments != 1) {
-        fprintf(stderr, "Us: ProcessLWA1, ProcessLWA2 o ProcessLWA3, sense arguments.\n");
+        mida = snprintf(text, sizeof(text), "Us: ProcessLWA1, ProcessLWA2 o ProcessLWA3, sense arguments.\n");
+        write(STDERR_FILENO, text, mida);
         return 1;
     }
     resultat = executar_lleuger_a(&recursos);
-    fprintf(stderr, "ProcessLWA%d: connexio interrompuda o error d'inici.\n", IDENTIFICADOR + 1);
+    mida = snprintf(text, sizeof(text), "ProcessLWA%d: connexio interrompuda o error d'inici.\n", IDENTIFICADOR + 1);
+    write(STDERR_FILENO, text, mida);
     if (recursos.servidor >= 0) {
         close(recursos.servidor);
     }

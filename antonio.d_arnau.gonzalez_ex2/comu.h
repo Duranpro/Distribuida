@@ -5,7 +5,7 @@
 #define PORT_PESANT_B 8196
 #define PORT_A_BASE 8197
 #define PORT_B_PRIMER 8199
-/* B2 reutilitza PORT_PESANT_B despres de l'arrencada del pesant. */
+/* B2 hereta el servidor de PORT_PESANT_B i l'aten amb el primer INICI. */
 
 /* Els noms de protocol coincideixen amb els apunts. */
 #define IDENTITAT 1

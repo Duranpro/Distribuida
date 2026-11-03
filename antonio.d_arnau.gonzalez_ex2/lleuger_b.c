@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "comu.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include <signal.h>
 #include <errno.h>
@@ -14,18 +15,14 @@ typedef struct {
     int companys[3];
 } RecursosLleuger;
 
-/* Es crida amb el primer INICI: el pesant ja ha tancat el servidor. */
+/* Amb el primer INICI, el pesant ja no fa accept al servidor heretat. */
 int preparar_companys_b(RecursosLleuger *recursos) {
     int i = 0, port = 0;
     Missatge missatge = {0};
 
-    /* B3 nomes connecta; B2 reutilitza el port del pesant ja tancat. */
-    if (IDENTIFICADOR < 2) {
-        port = PORT_B_PRIMER;
-        if (IDENTIFICADOR == 1) {
-            port = PORT_PESANT_B;
-        }
-        recursos->servidor = crear_servidor(port);
+    /* B1 obre servidor; B2 l'hereta del pesant i B3 nomes connecta. */
+    if (IDENTIFICADOR == 0) {
+        recursos->servidor = crear_servidor(PORT_B_PRIMER);
         if (recursos->servidor < 0) {
             perror("servidor lightweight B");
             return 1;
@@ -149,8 +146,8 @@ int executar_lleuger_b(RecursosLleuger *recursos) {
             }
             if (resultat) {
                 /* Durant aquest bloc, els missatges queden pendents als sockets. */
+                mida = snprintf(text, sizeof(text), "I'm lightweight process B%d\n", IDENTIFICADOR + 1);
                 for (i = 0; i < 10; i++) {
-                    mida = snprintf(text, sizeof(text), "I'm lightweight process B%d\n", IDENTIFICADOR + 1);
                     write(STDOUT_FILENO, text, mida);
                     sleep(1);
                 }
@@ -175,16 +172,21 @@ int executar_lleuger_b(RecursosLleuger *recursos) {
 }
 
 int main(int nombre_arguments, char **arguments) {
-    int i = 0, resultat = 0;
+    int i = 0, resultat = 0, mida = 0;
+    char text[128] = {0};
     RecursosLleuger recursos = {-1, -1, -1, {-1, -1, -1}};
 
-    (void)arguments;
-    if (nombre_arguments != 1) {
-        fprintf(stderr, "Us: ProcessLWB1, ProcessLWB2 o ProcessLWB3, sense arguments.\n");
+    if (nombre_arguments != 1 + (IDENTIFICADOR == 1)) {
+        mida = snprintf(text, sizeof(text), "Us: iniciar els lightweight B des de ProcessB.\n");
+        write(STDERR_FILENO, text, mida);
         return 1;
     }
+    if (IDENTIFICADOR == 1) {
+        recursos.servidor = atoi(arguments[1]);
+    }
     resultat = executar_lleuger_b(&recursos);
-    fprintf(stderr, "ProcessLWB%d: connexio interrompuda o error d'inici.\n", IDENTIFICADOR + 1);
+    mida = snprintf(text, sizeof(text), "ProcessLWB%d: connexio interrompuda o error d'inici.\n", IDENTIFICADOR + 1);
+    write(STDERR_FILENO, text, mida);
     if (recursos.servidor >= 0) {
         close(recursos.servidor);
     }

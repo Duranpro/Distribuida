@@ -18,7 +18,8 @@ typedef struct {
 int executar_pesant(RecursosPesant *recursos) {
     int i = 0, torn = 0;
     char programa[32] = {0}, grup = 'A';
-    char *arguments_programa[] = {programa, NULL};
+    char descriptor[16] = {0};
+    char *arguments_programa[] = {programa, NULL, NULL};
     Missatge missatge = {0};
     RellotgeLamport rellotge = {0};
 
@@ -39,7 +40,13 @@ int executar_pesant(RecursosPesant *recursos) {
             return 1;
         }
         if (recursos->fills[i] == 0) {
-            close(recursos->servidor);
+            if (GRUP == 1 && i == 1) {
+                /* B2 conserva el mateix servidor, sense tornar a fer bind. */
+                snprintf(descriptor, sizeof(descriptor), "%d", recursos->servidor);
+                arguments_programa[1] = descriptor;
+            } else {
+                close(recursos->servidor);
+            }
             /* Mateix patro que teoria/Forks, exec/forking3.c. */
             execv(programa, arguments_programa);
             perror("execv");
@@ -104,20 +111,23 @@ int executar_pesant(RecursosPesant *recursos) {
 }
 
 int main(int nombre_arguments, char **arguments) {
-    int i = 0, resultat = 0;
+    int i = 0, resultat = 0, mida = 0;
+    char text[128] = {0};
     char grup = 'A';
     RecursosPesant recursos = {-1, -1, -1, {-1, -1, -1}, {-1, -1, -1}};
 
     (void)arguments;
     if (nombre_arguments != 1) {
-        fprintf(stderr, "Us: ProcessA o ProcessB, sense arguments.\n");
+        mida = snprintf(text, sizeof(text), "Us: ProcessA o ProcessB, sense arguments.\n");
+        write(STDERR_FILENO, text, mida);
         return 1;
     }
     if (GRUP == 1) {
         grup = 'B';
     }
     resultat = executar_pesant(&recursos);
-    fprintf(stderr, "Process%c: connexio interrompuda o error d'inici.\n", grup);
+    mida = snprintf(text, sizeof(text), "Process%c: connexio interrompuda o error d'inici.\n", grup);
+    write(STDERR_FILENO, text, mida);
     if (recursos.connexio >= 0) {
         close(recursos.connexio);
     }
