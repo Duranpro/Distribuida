@@ -1,0 +1,256 @@
+/* 
+ * Usuaris: arnau.gonzalez y antonio.d
+ * Noms i Cognoms: Arnau Gonzalez y Toni Duran
+ */
+
+#define _GNU_SOURCE
+#include <fcntl.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+
+#define SIMULATED 0
+#define UNCERTAIN 1
+#define CONSCIOUS 2
+
+typedef struct {
+    char nom[25];
+    int id;
+    int any_construccio;
+} Model;
+
+typedef struct {
+    int id_model;
+    int id_sessio;
+    char *pregunta;
+    int puntuacio_resposta;
+    int index_empatia;
+} Sessio;
+
+int carregar_models(char *nom_fitxer, Model **models, int *quantitat_models) {
+    Model *array_models = NULL, *temporal = NULL;
+    int fd = -1, quantitat = 0, bytes_llegits = 0;
+    fd = open(nom_fitxer, O_RDONLY);
+    if (fd == -1) {
+        return -1;
+    }
+    while (1) {
+        temporal = realloc(array_models, (quantitat + 1) * sizeof(Model));
+
+        if (temporal == NULL) {
+            free(array_models);
+            close(fd);
+            return -1;
+        }
+        array_models = temporal;
+        bytes_llegits = read(fd, &array_models[quantitat], sizeof(Model));
+
+        if (bytes_llegits == 0) {
+            break;
+        }
+
+        if (bytes_llegits < 0) {
+            free(array_models);
+            close(fd);
+            return -1;
+        }
+        array_models[quantitat].nom[24] = '\0';
+        quantitat++;
+    }
+
+    close(fd);
+    *models = array_models;
+    *quantitat_models = quantitat;
+    return 0;
+}
+
+int llegir_fitxer_text(char *nom_fitxer, char **buffer) {
+    char *dades = NULL;
+    int fd = -1, mida = 0, bytes_llegits = 0;
+    fd = open(nom_fitxer, O_RDONLY);
+    if (fd == -1) {
+        return -1;
+    }
+
+    // mida del fitxer per reservar exactament la memòria necessària abans de llegir-lo.
+    mida = lseek(fd, 0, SEEK_END);
+    lseek(fd, 0, SEEK_SET);
+    dades = malloc(mida + 1);
+    if (dades == NULL) {
+        close(fd);
+        return -1;
+    }
+
+    bytes_llegits = read(fd, dades, mida);
+    if (bytes_llegits < 0) {
+        free(dades);
+        close(fd);
+        return -1;
+    }
+
+    dades[bytes_llegits] = '\0';
+    close(fd);
+    *buffer = dades;
+
+    return 0;
+}
+
+int comptar_sessions(char *text) {
+    int quantitat = 0, i = 0;
+
+    if (text[0] != '\0') {
+        quantitat = 1;
+    }
+
+    while (text[i] != '\0') {
+        if (text[i] == '\n' && text[i + 1] != '\0') {
+            quantitat++;
+        }
+        i++;
+    }
+    return quantitat;
+}
+
+void treure_cometes(char *text) {
+    int longitud = strlen(text), i = 0;
+    if (longitud >= 2 && text[0] == '"' && text[longitud - 1] == '"') {
+        for (i = 0; i < longitud - 2; i++) {
+            text[i] = text[i + 1];
+        }
+        text[longitud - 2] = '\0';
+    }
+}
+
+int carregar_sessions(char *nom_fitxer, Sessio **sessions, int *quantitat_sessions, char **text_sessions) {
+    Sessio *array_sessions = NULL;
+    char *text = NULL, *guardat_linia = NULL, *linia = NULL, *guardat_camp = NULL;
+    char *id_model_text = NULL, *id_sessio_text = NULL,  *pregunta = NULL, *resposta_text = NULL, *empatia_text = NULL;
+    int maxim_sessions = 0, quantitat = 0;
+
+    if (llegir_fitxer_text(nom_fitxer,&text) == -1) {
+        return -1;
+    }
+    maxim_sessions = comptar_sessions(text); 
+    array_sessions = malloc(maxim_sessions * sizeof(Sessio));
+    if (array_sessions == NULL) {
+        free(text);
+        return -1;
+    }
+
+    linia = strtok_r(text, "\n", &guardat_linia);
+    while (linia != NULL) {
+        guardat_camp = NULL;
+        id_model_text = strtok_r(linia, "&", &guardat_camp);
+        id_sessio_text = strtok_r(NULL, "&", &guardat_camp);
+        pregunta = strtok_r(NULL, "&", &guardat_camp);
+        resposta_text = strtok_r(NULL, "&", &guardat_camp);
+        empatia_text= strtok_r(NULL, "&", &guardat_camp);
+
+        treure_cometes(pregunta);
+
+        array_sessions[quantitat].id_model = atoi(id_model_text);
+        array_sessions[quantitat].id_sessio = atoi(id_sessio_text);
+        array_sessions[quantitat].pregunta = pregunta;
+        array_sessions[quantitat].puntuacio_resposta = atoi(resposta_text);
+        array_sessions[quantitat].index_empatia = atoi(empatia_text);
+        quantitat++;
+
+
+        linia = strtok_r(NULL, "\n", &guardat_linia);
+    }
+
+    *sessions = array_sessions;
+    *quantitat_sessions = quantitat;
+    *text_sessions = text;
+
+    return 0;
+}
+
+int classificar_sessio(int puntuacio_resposta, int index_empatia) {
+    float mitjana = (puntuacio_resposta +  index_empatia) / 2.0f;
+
+    if (mitjana > 80.0f) {
+        return CONSCIOUS;
+    }
+    if (mitjana >= 60.0f) {
+        return UNCERTAIN;
+    }
+    return SIMULATED;
+}
+
+char *text_classificacio(int classificacio) {
+    if (classificacio == CONSCIOUS) {
+        return "CONSCIOUS";
+    }
+
+    if (classificacio == UNCERTAIN) {
+        return "UNCERTAIN";
+    }
+    return "SIMULATED";
+}
+
+void mostrar_informe(Model *models, int quantitat_models, Sessio *sessions, int quantitat_sessions) {
+    char *linia = NULL;
+    int i = 0, j = 0, classificacio = 0, veredicte_final = CONSCIOUS;
+    write(1, "=== TURING EVALUATION REPORT ===\n\n", strlen("=== TURING EVALUATION REPORT ===\n\n"));
+
+    for (i = 0; i < quantitat_models; i++) {
+        asprintf(&linia, "Model: %s (ID=%d) - Build Year: %d\n", models[i].nom, models[i].id, models[i].any_construccio);
+        write(1, linia, strlen(linia));
+        free(linia);
+        linia = NULL;
+
+        veredicte_final = CONSCIOUS;
+        for (j = 0; j < quantitat_sessions; j++) {
+            if (sessions[j].id_model == models[i].id) {
+                classificacio = classificar_sessio(sessions[j].puntuacio_resposta, sessions[j].index_empatia);
+
+                if (classificacio < veredicte_final) {
+                    veredicte_final = classificacio;
+                }
+                asprintf(&linia, "\t[Session %d]\n" "\t\tQuestion: \"%s\"\n" "\t\tResponse: %d | Empathy: %d --> %s\n", sessions[j].id_sessio, sessions[j].pregunta, sessions[j].puntuacio_resposta, sessions[j].index_empatia, text_classificacio(classificacio));
+                write(1, linia, strlen(linia));
+                free(linia);
+                linia = NULL;
+            }
+        }
+        asprintf(&linia, "\tFinal Verdict: %s\n\n", text_classificacio(veredicte_final));
+        write(1, linia, strlen(linia));
+        free(linia);
+        linia = NULL;
+    }
+
+    write(1, "=== END OF REPORT ===\n", strlen("=== END OF REPORT ===\n"));
+}
+
+int main(int argc, char *argv[]) {
+    Model *models = NULL;
+    Sessio *sessions= NULL;
+    char *text_sessions = NULL;
+    int quantitat_models = 0, quantitat_sessions = 0;
+
+    if (argc != 3) {
+        write(2, "ERROR: Incorrect number of arguments\n", strlen("ERROR: Incorrect number of arguments\n"));
+        write(2, "Please provide the input file names ./S0 models.bin sessions.txt\n", strlen("Please provide the input file names ./S0 models.bin sessions.txt\n"));
+        return 1;
+    }
+
+    if (carregar_models(argv[1], &models, &quantitat_models) == -1) {
+        write(2, "ERROR: Could not read models file\n", strlen("ERROR: Could not read models file\n"));
+        return 1;
+    }
+
+    if (carregar_sessions(argv[2], &sessions, &quantitat_sessions, &text_sessions) == -1) {
+        write(2, "ERROR: Could not read sessions file\n", strlen("ERROR: Could not read sessions file\n"));
+        free(models);
+        return 1;
+    }
+
+    mostrar_informe(models, quantitat_models, sessions, quantitat_sessions);
+    free(sessions);
+    free(text_sessions);
+    free(models);
+
+    return 0;
+}

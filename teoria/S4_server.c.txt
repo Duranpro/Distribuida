@@ -1,0 +1,361 @@
+/* 
+ * Usuaris: arnau.gonzalez y antonio.d
+ * Noms i Cognoms: Arnau Gonzalez y Toni Duran
+ */
+
+#define _GNU_SOURCE
+#include <unistd.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <fcntl.h>
+#include <pthread.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+
+#include "S4_library.h"
+
+typedef struct {
+    int timestamp;
+    char direccio;
+    char *accio;
+} Operacio;
+
+typedef struct {
+    int fd_client;
+    int id_equip;
+    char *nom_equip;
+    char direccio;
+    Operacio *operacions;
+    int num_operacions;
+} DadesClient;
+
+typedef struct {
+    DadesClient equip1;
+    DadesClient equip2;
+} DadesServidor;
+
+int llegir_trama(int fd, Header *capcalera, char **payload) {
+    int bytes_llegits = 0, total_llegit = 0, pendent = 0;
+    char *buffer = NULL;
+
+    bytes_llegits = read(fd, &capcalera->type, sizeof(capcalera->type));
+    if (bytes_llegits <= 0) {
+        return -1;
+    }
+
+    bytes_llegits = read(fd, &capcalera->length, sizeof(capcalera->length));
+    if (bytes_llegits <= 0) {
+        return -1;
+    }
+
+    if (capcalera->length > 0) {
+        buffer = malloc(capcalera->length + 1);
+        if (buffer == NULL) {
+            return -1;
+        }
+
+        total_llegit = 0;
+        while (total_llegit < capcalera->length) {
+            pendent = capcalera->length - total_llegit;
+            bytes_llegits = read(fd, buffer + total_llegit, pendent);
+            if (bytes_llegits <= 0) {
+                free(buffer);
+                return -1;
+            }
+            total_llegit = total_llegit + bytes_llegits;
+        }
+        buffer[capcalera->length] = '\0';
+        *payload = buffer;
+    } else {
+        *payload = NULL;
+    }
+
+    return 0;
+}
+
+int enviar_trama(int fd, char tipus, int longitud, char *payload) {
+    int bytes_escrits = 0, total_escrit = 0, pendent = 0;
+
+    bytes_escrits = write(fd, &tipus, sizeof(tipus));
+    if (bytes_escrits <= 0) {
+        return -1;
+    }
+
+    bytes_escrits = write(fd, &longitud, sizeof(longitud));
+    if (bytes_escrits <= 0) {
+        return -1;
+    }
+
+    if (longitud > 0 && payload != NULL) {
+        total_escrit = 0;
+        while (total_escrit < longitud) {
+            pendent = longitud - total_escrit;
+            bytes_escrits = write(fd, payload + total_escrit, pendent);
+            if (bytes_escrits <= 0) {
+                return -1;
+            }
+            total_escrit = total_escrit + bytes_escrits;
+        }
+    }
+
+    return 0;
+}
+
+void *gestionar_equip(void *arg) {
+    DadesClient *dades = (DadesClient *)arg;
+    Header capcalera;
+    char *payload = NULL, *pos = NULL;
+    int ts = 0, len = 0;
+    char *txt_accio = NULL;
+    Operacio *temp_ops = NULL;
+
+    while (1) {
+        if (llegir_trama(dades->fd_client, &capcalera, &payload) < 0) {
+            break;
+        }
+
+        if (capcalera.type == 'O') {
+            pos = strchr(payload, '&');
+            if (pos != NULL) {
+                *pos = '\0';
+                ts = atoi(payload);
+                len = strlen(pos + 1);
+                txt_accio = malloc(len + 1);
+                strcpy(txt_accio, pos + 1);
+            } else {
+                ts = 0;
+                len = strlen(payload);
+                txt_accio = malloc(len + 1);
+                strcpy(txt_accio, payload);
+            }
+
+            if (txt_accio != NULL) {
+                len = strlen(txt_accio);
+                while (len > 0 && (txt_accio[len - 1] == '\r' || txt_accio[len - 1] == '\n')) {
+                    txt_accio[len - 1] = '\0';
+                    len--;
+                }
+            }
+
+            temp_ops = realloc(dades->operacions, sizeof(Operacio) * (dades->num_operacions + 1));
+            if (temp_ops != NULL) {
+                dades->operacions = temp_ops;
+                dades->operacions[dades->num_operacions].timestamp = ts;
+                dades->operacions[dades->num_operacions].direccio = dades->direccio;
+                dades->operacions[dades->num_operacions].accio = txt_accio;
+                dades->num_operacions = dades->num_operacions + 1;
+            } else {
+                free(txt_accio);
+            }
+            free(payload);
+            payload = NULL;
+        } else if (capcalera.type == 'C') {
+            free(payload);
+            payload = NULL;
+            break;
+        } else {
+            free(payload);
+            payload = NULL;
+        }
+    }
+
+    return NULL;
+}
+
+int main(int argc, char *argv[]) {
+    DadesServidor servidor;
+    struct sockaddr_in adr_servidor;
+    Header capcalera;
+    Operacio *total_ops = NULL, *ops_inv = NULL, temp_swap;
+    pthread_t fil1, fil2;
+    char *linia = NULL, *payload = NULL, *linia_temporal = NULL, *temp_realloc = NULL;
+    char *pos_separador = NULL, *text_direccio = NULL;
+    int port = 0, fd_escolta = -1, idx = 0, i = 0, j = 0, total_elements = 0;
+    int len_actual = 0, len_linia = 0, hi_ha_colisio = 0, len_nom = 0;
+
+    if (argc != 2) {
+        write(1, "Usage: ./S4_server <puerto>\n", strlen("Usage: ./S4_server <puerto>\n"));
+        return 1;
+    }
+
+    port = atoi(argv[1]);
+
+    memset(&servidor, 0, sizeof(DadesServidor));
+
+    fd_escolta = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd_escolta < 0) {
+        return 1;
+    }
+
+    memset(&adr_servidor, 0, sizeof(adr_servidor));
+    adr_servidor.sin_family = AF_INET;
+    adr_servidor.sin_addr.s_addr = INADDR_ANY;
+    adr_servidor.sin_port = htons(port);
+
+    if (bind(fd_escolta, (struct sockaddr *)&adr_servidor, sizeof(adr_servidor)) < 0) {
+        close(fd_escolta);
+        return 1;
+    }
+
+    listen(fd_escolta, 2);
+
+    write(1, "[TURNSTILE] Waiting for the two field teams...\n", strlen("[TURNSTILE] Waiting for the two field teams...\n"));
+
+    servidor.equip1.fd_client = accept(fd_escolta, NULL, NULL);
+    servidor.equip1.id_equip = 1;
+    if (llegir_trama(servidor.equip1.fd_client, &capcalera, &payload) == 0 && capcalera.type == 'R') {
+        pos_separador = strchr(payload, '&');
+        if (pos_separador != NULL) {
+            *pos_separador = '\0';
+            len_nom = strlen(payload);
+            servidor.equip1.nom_equip = malloc(len_nom + 1);
+            strcpy(servidor.equip1.nom_equip, payload);
+            servidor.equip1.direccio = *(pos_separador + 1);
+
+            if (servidor.equip1.direccio == 'F') {
+                text_direccio = "FORWARD";
+            } else {
+                text_direccio = "INVERTED";
+            }
+
+            asprintf(&linia, "[TURNSTILE] Team %s registered -- direction %s (id %d)\n", servidor.equip1.nom_equip, text_direccio, servidor.equip1.id_equip);
+            write(1, linia, strlen(linia));
+            free(linia);
+        }
+        free(payload);
+        payload = NULL;
+    }
+
+    servidor.equip2.fd_client = accept(fd_escolta, NULL, NULL);
+    servidor.equip2.id_equip = 2;
+    if (llegir_trama(servidor.equip2.fd_client, &capcalera, &payload) == 0 && capcalera.type == 'R') {
+        pos_separador = strchr(payload, '&');
+        if (pos_separador != NULL) {
+            *pos_separador = '\0';
+            len_nom = strlen(payload);
+            servidor.equip2.nom_equip = malloc(len_nom + 1);
+            strcpy(servidor.equip2.nom_equip, payload);
+            servidor.equip2.direccio = *(pos_separador + 1);
+
+            if (servidor.equip2.direccio == 'F') {
+                text_direccio = "FORWARD";
+            } else {
+                text_direccio = "INVERTED";
+            }
+
+            asprintf(&linia, "[TURNSTILE] Team %s registered -- direction %s (id %d)\n", servidor.equip2.nom_equip, text_direccio, servidor.equip2.id_equip);
+            write(1, linia, strlen(linia));
+            free(linia);
+        }
+        free(payload);
+        payload = NULL;
+    }
+
+    write(1, "[TURNSTILE] Both teams in position -- opening the turnstile\n", strlen("[TURNSTILE] Both teams in position -- opening the turnstile\n"));
+
+    enviar_trama(servidor.equip1.fd_client, 'S', 0, NULL);
+    enviar_trama(servidor.equip2.fd_client, 'S', 0, NULL);
+
+    pthread_create(&fil1, NULL, gestionar_equip, &servidor.equip1);
+    pthread_create(&fil2, NULL, gestionar_equip, &servidor.equip2);
+
+    pthread_join(fil1, NULL);
+    pthread_join(fil2, NULL);
+
+    total_elements = servidor.equip1.num_operacions + servidor.equip2.num_operacions;
+    asprintf(&linia, "[TURNSTILE] Reconciling %d operations...\n", total_elements);
+    write(1, linia, strlen(linia));
+    free(linia);
+
+    if (servidor.equip1.direccio == 'I') {
+        ops_inv = malloc(sizeof(Operacio) * servidor.equip1.num_operacions);
+        for (i = 0; i < servidor.equip1.num_operacions; i++) {
+            ops_inv[i] = servidor.equip1.operacions[servidor.equip1.num_operacions - 1 - i];
+        }
+        free(servidor.equip1.operacions);
+        servidor.equip1.operacions = ops_inv;
+    }
+    if (servidor.equip2.direccio == 'I') {
+        ops_inv = malloc(sizeof(Operacio) * servidor.equip2.num_operacions);
+        for (i = 0; i < servidor.equip2.num_operacions; i++) {
+            ops_inv[i] = servidor.equip2.operacions[servidor.equip2.num_operacions - 1 - i];
+        }
+        free(servidor.equip2.operacions);
+        servidor.equip2.operacions = ops_inv;
+    }
+
+    total_ops = malloc(sizeof(Operacio) * total_elements);
+    idx = 0;
+    for (i = 0; i < servidor.equip1.num_operacions; i++) {
+        total_ops[idx] = servidor.equip1.operacions[i];
+        idx++;
+    }
+    for (i = 0; i < servidor.equip2.num_operacions; i++) {
+        total_ops[idx] = servidor.equip2.operacions[i];
+        idx++;
+    }
+
+    for (i = 0; i < total_elements - 1; i++) {
+        for (j = 0; j < total_elements - 1 - i; j++) {
+            if ((total_ops[j].timestamp > total_ops[j + 1].timestamp) ||
+                (total_ops[j].timestamp == total_ops[j + 1].timestamp && total_ops[j].direccio == 'I' && total_ops[j + 1].direccio == 'F')) {
+                temp_swap = total_ops[j];
+                total_ops[j] = total_ops[j + 1];
+                total_ops[j + 1] = temp_swap;
+            }
+        }
+    }
+
+    asprintf(&linia_temporal, "=== MISSION TIMELINE ===\n");
+    len_actual = strlen(linia_temporal);
+
+    for (i = 0; i < total_elements; i++) {
+        hi_ha_colisio = 0;
+        if ((i > 0 && total_ops[i].timestamp == total_ops[i - 1].timestamp && total_ops[i].direccio != total_ops[i - 1].direccio) ||
+            (i < total_elements - 1 && total_ops[i].timestamp == total_ops[i + 1].timestamp && total_ops[i].direccio != total_ops[i + 1].direccio)) {
+            if (total_ops[i].direccio == 'I') {
+                hi_ha_colisio = 1;
+            }
+        }
+
+        if (hi_ha_colisio == 1) {
+            asprintf(&linia, "t=%d (%c) %s    << TEMPORAL COLLISION\n", total_ops[i].timestamp, total_ops[i].direccio, total_ops[i].accio);
+        } else {
+            asprintf(&linia, "t=%d (%c) %s\n", total_ops[i].timestamp, total_ops[i].direccio, total_ops[i].accio);
+        }
+
+        if (linia != NULL) {
+            len_linia = strlen(linia);
+            temp_realloc = realloc(linia_temporal, len_actual + len_linia + 1);
+            if (temp_realloc != NULL) {
+                linia_temporal = temp_realloc;
+                memcpy(linia_temporal + len_actual, linia, len_linia + 1);
+                len_actual = len_actual + len_linia;
+            }
+            free(linia);
+            linia = NULL;
+        }
+    }
+
+    write(1, linia_temporal, len_actual);
+
+    enviar_trama(servidor.equip1.fd_client, 'T', len_actual, linia_temporal);
+    enviar_trama(servidor.equip2.fd_client, 'T', len_actual, linia_temporal);
+
+    close(servidor.equip1.fd_client);
+    close(servidor.equip2.fd_client);
+    close(fd_escolta);
+
+    for (i = 0; i < total_elements; i++) {
+        free(total_ops[i].accio);
+    }
+    free(total_ops);
+    free(servidor.equip1.operacions);
+    free(servidor.equip2.operacions);
+    free(servidor.equip1.nom_equip);
+    free(servidor.equip2.nom_equip);
+    free(linia_temporal);
+
+    return 0;
+}

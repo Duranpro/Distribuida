@@ -8,12 +8,17 @@
 #include <sys/wait.h>
 
 typedef struct {
-    int servidor, altre, connexio, lleugers[3], fills[3];
+    int servidor;
+    int altre;
+    int connexio;
+    int lleugers[3];
+    int fills[3];
 } RecursosPesant;
 
 int executar_pesant(RecursosPesant *recursos) {
     int i = 0, torn = 0;
     char programa[32] = {0}, grup = 'A';
+    char *arguments_programa[] = {programa, NULL};
     Missatge missatge = {0};
     RellotgeLamport rellotge = {0};
 
@@ -21,7 +26,7 @@ int executar_pesant(RecursosPesant *recursos) {
         grup = 'B';
     }
     signal(SIGPIPE, SIG_IGN);
-    recursos->servidor = crear_servidor(5000 + GRUP);
+    recursos->servidor = crear_servidor(PORT_PESANT_A + GRUP);
     if (recursos->servidor < 0) {
         perror("servidor heavyweight");
         return 1;
@@ -35,8 +40,9 @@ int executar_pesant(RecursosPesant *recursos) {
         }
         if (recursos->fills[i] == 0) {
             close(recursos->servidor);
-            execl(programa, programa, (char *)NULL);
-            perror("execl");
+            /* Mateix patro que teoria/Forks, exec/forking3.c. */
+            execv(programa, arguments_programa);
+            perror("execv");
             _exit(1);
         }
     }
@@ -62,13 +68,10 @@ int executar_pesant(RecursosPesant *recursos) {
     if (GRUP == 0) {
         torn = 1;
     } else {
-        recursos->altre = connectar(5000);
+        recursos->altre = connectar(PORT_PESANT_A);
         if (recursos->altre < 0 || enviar(recursos->altre, IDENTITAT, 3, 0) < 0) {
             return 1;
         }
-    }
-    if (recursos->altre < 0) {
-        return 1;
     }
     close(recursos->servidor);
     recursos->servidor = -1;

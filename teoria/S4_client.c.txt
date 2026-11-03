@@ -1,0 +1,237 @@
+/* 
+ * Usuaris: arnau.gonzalez y antonio.d
+ * Noms i Cognoms: Arnau Gonzalez y Toni Duran
+ */
+
+#define _GNU_SOURCE
+#include <unistd.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <fcntl.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+
+#include "S4_library.h"
+
+int llegir_trama(int fd, Header *capcalera, char **payload) {
+    int bytes_llegits = 0, total_llegit = 0, pendent = 0;
+    char *buffer = NULL;
+
+    bytes_llegits = read(fd, &capcalera->type, sizeof(capcalera->type));
+    if (bytes_llegits <= 0) {
+        return -1;
+    }
+
+    bytes_llegits = read(fd, &capcalera->length, sizeof(capcalera->length));
+    if (bytes_llegits <= 0) {
+        return -1;
+    }
+
+    if (capcalera->length > 0) {
+        buffer = malloc(capcalera->length + 1);
+        if (buffer == NULL) {
+            return -1;
+        }
+
+        total_llegit = 0;
+        while (total_llegit < capcalera->length) {
+            pendent = capcalera->length - total_llegit;
+            bytes_llegits = read(fd, buffer + total_llegit, pendent);
+            if (bytes_llegits <= 0) {
+                free(buffer);
+                return -1;
+            }
+            total_llegit = total_llegit + bytes_llegits;
+        }
+        buffer[capcalera->length] = '\0';
+        *payload = buffer;
+    } else {
+        *payload = NULL;
+    }
+
+    return 0;
+}
+
+int enviar_trama(int fd, char tipus, int longitud, char *payload) {
+    int bytes_escrits = 0, total_escrit = 0, pendent = 0;
+
+    bytes_escrits = write(fd, &tipus, sizeof(tipus));
+    if (bytes_escrits <= 0) {
+        return -1;
+    }
+
+    bytes_escrits = write(fd, &longitud, sizeof(longitud));
+    if (bytes_escrits <= 0) {
+        return -1;
+    }
+
+    if (longitud > 0 && payload != NULL) {
+        total_escrit = 0;
+        while (total_escrit < longitud) {
+            pendent = longitud - total_escrit;
+            bytes_escrits = write(fd, payload + total_escrit, pendent);
+            if (bytes_escrits <= 0) {
+                return -1;
+            }
+            total_escrit = total_escrit + bytes_escrits;
+        }
+    }
+
+    return 0;
+}
+
+int main(int argc, char *argv[]) {
+    struct sockaddr_in adr_servidor;
+    Header capcalera;
+    char *ip = NULL, *nom_fitxer = NULL, *linia = NULL, *contingut_capcalera = NULL;
+    char *nom_equip = NULL, *pos_sep = NULL, *payload = NULL;
+    char **linies_operacions = NULL, **temp_linies = NULL;
+    int port = 0, fd_fitxer = -1, fd_socket = -1, num_operacions = 0, i = 0, len = 0;
+
+    if (argc != 4) {
+        write(1, "Usage: ./S4_client <ip> <puerto> <archivo_equipo>\n", strlen("Usage: ./S4_client <ip> <puerto> <archivo_equipo>\n"));
+        return 1;
+    }
+
+    ip = argv[1];
+    port = atoi(argv[2]);
+    nom_fitxer = argv[3];
+
+    fd_fitxer = open(nom_fitxer, O_RDONLY);
+    if (fd_fitxer < 0) {
+        write(1, "Error opening the team file\n", strlen("Error opening the team file\n"));
+        return 1;
+    }
+
+    contingut_capcalera = readUntil(fd_fitxer, '\n');
+    if (contingut_capcalera == NULL) {
+        close(fd_fitxer);
+        return 1;
+    }
+
+    len = strlen(contingut_capcalera);
+    while (len > 0 && (contingut_capcalera[len - 1] == '\r' || contingut_capcalera[len - 1] == '\n')) {
+        contingut_capcalera[len - 1] = '\0';
+        len--;
+    }
+
+    pos_sep = strchr(contingut_capcalera, '&');
+    if (pos_sep != NULL) {
+        len = pos_sep - contingut_capcalera;
+        nom_equip = malloc(len + 1);
+        memcpy(nom_equip, contingut_capcalera, len);
+        nom_equip[len] = '\0';
+    } else {
+        len = strlen(contingut_capcalera);
+        nom_equip = malloc(len + 1);
+        strcpy(nom_equip, contingut_capcalera);
+    }
+
+    while (1) {
+        linia = readUntil(fd_fitxer, '\n');
+        if (linia == NULL) {
+            break;
+        }
+
+        len = strlen(linia);
+        while (len > 0 && (linia[len - 1] == '\r' || linia[len - 1] == '\n')) {
+            linia[len - 1] = '\0';
+            len--;
+        }
+
+        if (len > 0) {
+            temp_linies = realloc(linies_operacions, sizeof(char *) * (num_operacions + 1));
+            if (temp_linies != NULL) {
+                linies_operacions = temp_linies;
+                linies_operacions[num_operacions] = linia;
+                num_operacions = num_operacions + 1;
+            } else {
+                free(linia);
+            }
+        } else {
+            free(linia);
+        }
+    }
+    close(fd_fitxer);
+
+    fd_socket = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd_socket < 0) {
+        free(contingut_capcalera);
+        free(nom_equip);
+        for (i = 0; i < num_operacions; i++) {
+            free(linies_operacions[i]);
+        }
+        free(linies_operacions);
+        return 1;
+    }
+
+    memset(&adr_servidor, 0, sizeof(adr_servidor));
+    adr_servidor.sin_family = AF_INET;
+    adr_servidor.sin_port = htons(port);
+    inet_pton(AF_INET, ip, &adr_servidor.sin_addr);
+
+    if (connect(fd_socket, (struct sockaddr *)&adr_servidor, sizeof(adr_servidor)) < 0) {
+        close(fd_socket);
+        free(contingut_capcalera);
+        free(nom_equip);
+        for (i = 0; i < num_operacions; i++) {
+            free(linies_operacions[i]);
+        }
+        free(linies_operacions);
+        return 1;
+    }
+
+    enviar_trama(fd_socket, 'R', strlen(contingut_capcalera), contingut_capcalera);
+    free(contingut_capcalera);
+
+    asprintf(&linia, "[%s] Registered at the turnstile\n", nom_equip);
+    write(1, linia, strlen(linia));
+    free(linia);
+
+    asprintf(&linia, "[%s] Waiting for the other team...\n", nom_equip);
+    write(1, linia, strlen(linia));
+    free(linia);
+
+    if (llegir_trama(fd_socket, &capcalera, &payload) == 0 && capcalera.type == 'S') {
+        asprintf(&linia, "[%s] Entering the turnstile\n", nom_equip);
+        write(1, linia, strlen(linia));
+        free(linia);
+        if (payload != NULL) {
+            free(payload);
+            payload = NULL;
+        }
+    }
+
+    for (i = 0; i < num_operacions; i++) {
+        enviar_trama(fd_socket, 'O', strlen(linies_operacions[i]), linies_operacions[i]);
+    }
+
+    asprintf(&linia, "[%s] %d operations sent through the turnstile\n", nom_equip, num_operacions);
+    write(1, linia, strlen(linia));
+    free(linia);
+
+    enviar_trama(fd_socket, 'C', 0, NULL);
+
+    asprintf(&linia, "[%s] Waiting for the reconstructed timeline...\n", nom_equip);
+    write(1, linia, strlen(linia));
+    free(linia);
+
+    if (llegir_trama(fd_socket, &capcalera, &payload) == 0 && capcalera.type == 'T') {
+        if (payload != NULL) {
+            write(1, payload, strlen(payload));
+            free(payload);
+            payload = NULL;
+        }
+    }
+
+    close(fd_socket);
+
+    for (i = 0; i < num_operacions; i++) {
+        free(linies_operacions[i]);
+    }
+    free(linies_operacions);
+    free(nom_equip);
+
+    return 0;
+}

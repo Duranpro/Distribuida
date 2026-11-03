@@ -1,11 +1,25 @@
 #ifndef COMU_H
 #define COMU_H
 
+#define PORT_PESANT_A 8195
+#define PORT_PESANT_B 8196
+#define PORT_A_BASE 8197
+#define PORT_B_PRIMER 8199
+/* B2 reutilitza PORT_PESANT_B despres de l'arrencada del pesant. */
+
 /* Els noms de protocol coincideixen amb els apunts. */
-enum { IDENTITAT = 1, INICI, FI, TESTIMONI, REQUEST, ACK, RELEASE };
+#define IDENTITAT 1
+#define INICI 2
+#define FI 3
+#define TESTIMONI 4
+#define REQUEST 5
+#define ACK 6
+#define RELEASE 7
 
 typedef struct {
-    int tipus, origen, temps;
+    int tipus;
+    int origen;
+    int temps;
 } Missatge;
 
 typedef struct {
@@ -13,7 +27,8 @@ typedef struct {
 } RellotgeLamport;
 
 typedef struct {
-    int valors[3], identificador;
+    int valors[3];
+    int identificador;
 } RellotgeDirecte;
 
 void avancar_lamport(RellotgeLamport *rellotge);

@@ -1,0 +1,286 @@
+/* 
+ * Usuaris: arnau.gonzalez y antonio.d
+ * Noms i Cognoms: Arnau Gonzalez y Toni Duran
+ */
+
+#define _GNU_SOURCE
+#define _XOPEN_SOURCE 500
+#define _POSIX_C_SOURCE 1
+
+#include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <signal.h>
+
+typedef struct {
+    int id_fil;
+    int clau_inici;
+    int clau_fi;
+    char *text_xifrat;
+    int mida_text;
+    float *frequencies;
+    int millor_clau;
+    float millor_puntuacio;
+    char *millor_text;
+} DadesFil;
+
+// Variable global per a la cancel·lacio amb SIGINT
+int cancelat = 0;
+
+void gestionar_sigint(void) {
+    cancelat = 1;
+    write(1, "\nCancelando hilos en ejecucion...\n", strlen("\nCancelando hilos en ejecucion...\n"));
+}
+
+void gestionar_senyal(int senyal) {
+    switch (senyal) {
+        case SIGINT:
+            gestionar_sigint();
+            break;
+        default:
+            break;
+    }
+}
+
+void *executar_fil(void *arg) {
+    DadesFil *dades = (DadesFil *)arg;
+    int clau = 0, i = 0, index = 0, despc = 0, len_actual = 0, len_linia = 0;
+    float puntuacio = 0.0;
+    char car = '\0';
+    char *bloc_sortida = NULL, *linia = NULL, *text_temporal = NULL, *temp_realloc = NULL;
+
+    dades->millor_puntuacio = -1.0;
+    dades->millor_clau = dades->clau_inici;
+    dades->millor_text = malloc(dades->mida_text + 1);
+    text_temporal = malloc(dades->mida_text + 1);
+
+    if (dades->millor_text == NULL || text_temporal == NULL) {
+        free(dades->millor_text);
+        dades->millor_text = NULL;
+        free(text_temporal);
+        return NULL;
+    }
+
+    asprintf(&bloc_sortida, "[Hilo %d] probando claves %d..%d\n", dades->id_fil, dades->clau_inici, dades->clau_fi);
+    if (bloc_sortida == NULL) {
+        free(dades->millor_text);
+        dades->millor_text = NULL;
+        free(text_temporal);
+        return NULL;
+    }
+    len_actual = strlen(bloc_sortida);
+
+    for (clau = dades->clau_inici; clau <= dades->clau_fi; clau++) {
+        if (cancelat == 1) {
+            free(dades->millor_text);
+            dades->millor_text = NULL;
+            free(text_temporal);
+            free(bloc_sortida);
+            return NULL;
+        }
+
+        puntuacio = 0.0;
+
+        for (i = 0; i < dades->mida_text; i++) {
+            car = dades->text_xifrat[i];
+
+            if (car >= 'a' && car <= 'z') {
+                despc = (car - 'a' - clau) % 26;
+                if (despc < 0) {
+                    despc = despc + 26;
+                }
+                text_temporal[i] = 'a' + despc;
+                index = text_temporal[i] - 'a';
+                puntuacio = puntuacio + dades->frequencies[index];
+            } else if (car >= 'A' && car <= 'Z') {
+                despc = (car - 'A' - clau) % 26;
+                if (despc < 0) {
+                    despc = despc + 26;
+                }
+                text_temporal[i] = 'A' + despc;
+                index = text_temporal[i] - 'A';
+                puntuacio = puntuacio + dades->frequencies[index];
+            } else {
+                text_temporal[i] = car;
+            }
+        }
+        text_temporal[dades->mida_text] = '\0';
+
+        asprintf(&linia, "   clave %2d -> puntuacion = %.3f\n", clau, puntuacio);
+        if (linia != NULL) {
+            len_linia = strlen(linia);
+            temp_realloc = realloc(bloc_sortida, len_actual + len_linia + 1);
+            if (temp_realloc != NULL) {
+                bloc_sortida = temp_realloc;
+                memcpy(bloc_sortida + len_actual, linia, len_linia + 1);
+                len_actual = len_actual + len_linia;
+            }
+            free(linia);
+            linia = NULL;
+        }
+
+        if (puntuacio > dades->millor_puntuacio) {
+            dades->millor_puntuacio = puntuacio;
+            dades->millor_clau = clau;
+            memcpy(dades->millor_text, text_temporal, dades->mida_text + 1);
+        }
+    }
+
+    asprintf(&linia, "[Hilo %d] mejor local: clave %d (puntuacion = %.3f)\n\n", dades->id_fil, dades->millor_clau, dades->millor_puntuacio);
+    if (linia != NULL) {
+        len_linia = strlen(linia);
+        temp_realloc = realloc(bloc_sortida, len_actual + len_linia + 1);
+        if (temp_realloc != NULL) {
+            bloc_sortida = temp_realloc;
+            memcpy(bloc_sortida + len_actual, linia, len_linia + 1);
+            len_actual = len_actual + len_linia;
+        }
+        free(linia);
+        linia = NULL;
+    }
+
+    if (bloc_sortida != NULL) {
+        write(1, bloc_sortida, len_actual);
+        free(bloc_sortida);
+        bloc_sortida = NULL;
+    }
+
+    free(text_temporal);
+
+    return (void *)arg;
+}
+
+int main(int argc, char *argv[]) {
+    // Taula de frequencies del castella de l'enunciat
+    float frequencies[26] = {
+        0.1153, 0.0215, 0.0402, 0.0501, 0.1218,
+        0.0069, 0.0177, 0.0070, 0.0625, 0.0044,
+        0.0002, 0.0524, 0.0271, 0.0683, 0.0868,
+        0.0251, 0.0088, 0.0687, 0.0798, 0.0463,
+        0.0393, 0.0090, 0.0002, 0.0022, 0.0090,
+        0.0052
+    };
+    pthread_t *fils = NULL;
+    DadesFil *tasques = NULL;
+    char *text_xifrat = NULL, *linia = NULL;
+    void *retorn_fil = NULL;
+    int num_fils = 0, fd = -1, mida_fitxer = 0, bytes_llegits = 0;
+    int i = 0, inici = 0, fi = 0, base = 0, residu = 0;
+    int clau_global = 0, ret = 0;
+    float millor_puntuacio_global = -1.0;
+
+    if (argc != 3) {
+        asprintf(&linia, "Uso: ./S2 <n_hilos (1-26)> <fichero_cifrado>\n");
+        write(1, linia, strlen(linia));
+        free(linia);
+        return 1;
+    }
+
+    num_fils = atoi(argv[1]);
+    if (num_fils < 1 || num_fils > 26) {
+        write(1, "Error: el numero de hilos debe estar entre 1 y 26.\n", strlen("Error: el numero de hilos debe estar entre 1 y 26.\n"));
+        return 1;
+    }
+
+    fd = open(argv[2], O_RDONLY);
+    if (fd < 0) {
+        write(1, "Error: no se puede abrir el fichero cifrado.\n", strlen("Error: no se puede abrir el fichero cifrado.\n"));
+        return 1;
+    }
+
+    mida_fitxer = lseek(fd, 0, SEEK_END);
+    lseek(fd, 0, SEEK_SET);
+
+    text_xifrat = malloc(mida_fitxer + 1);
+    if (text_xifrat == NULL) {
+        close(fd);
+        return 1;
+    }
+
+    bytes_llegits = read(fd, text_xifrat, mida_fitxer);
+    if (bytes_llegits < 0) {
+        free(text_xifrat);
+        close(fd);
+        return 1;
+    }
+    text_xifrat[bytes_llegits] = '\0';
+    close(fd);
+
+    signal(SIGINT, gestionar_senyal);
+
+    fils = malloc(sizeof(pthread_t) * num_fils);
+    tasques = malloc(sizeof(DadesFil) * num_fils);
+    if (fils == NULL || tasques == NULL) {
+        free(text_xifrat);
+        free(fils);
+        free(tasques);
+        return 1;
+    }
+
+    base = 26 / num_fils;
+    residu = 26 % num_fils;
+    inici = 0;
+
+    for (i = 0; i < num_fils; i++) {
+        if (i < residu) {
+            fi = inici + base;
+        } else {
+            fi = inici + base - 1;
+        }
+
+        tasques[i].id_fil = i;
+        tasques[i].clau_inici = inici;
+        tasques[i].clau_fi = fi;
+        tasques[i].text_xifrat = text_xifrat;
+        tasques[i].mida_text = bytes_llegits;
+        tasques[i].frequencies = frequencies;
+        tasques[i].millor_text = NULL;
+
+        inici = fi + 1;
+    }
+
+    for (i = 0; i < num_fils; i++) {
+        pthread_create(&fils[i], NULL, executar_fil, &tasques[i]);
+    }
+
+    // Esperar els fils i recopilar el millor resultat
+    for (i = 0; i < num_fils; i++) {
+        ret = pthread_join(fils[i], &retorn_fil);
+
+        if (ret == 0 && retorn_fil != NULL && cancelat == 0 && tasques[i].millor_text != NULL) {
+            if (tasques[i].millor_puntuacio > millor_puntuacio_global) {
+                millor_puntuacio_global = tasques[i].millor_puntuacio;
+                clau_global = tasques[i].millor_clau;
+            }
+        }
+    }
+
+    // Mostrar el resultat final unicament si no s'ha cancel·lat
+    if (cancelat == 0 && millor_puntuacio_global >= 0.0) {
+        asprintf(&linia, "==> Clave mas probable: %d  (puntuacion = %.3f)\n\nTexto descifrado:\n", clau_global, millor_puntuacio_global);
+        write(1, linia, strlen(linia));
+        free(linia);
+
+        for (i = 0; i < num_fils; i++) {
+            if (tasques[i].millor_clau == clau_global && tasques[i].millor_text != NULL) {
+                write(1, tasques[i].millor_text, strlen(tasques[i].millor_text));
+                write(1, "\n", 1);
+                break;
+            }
+        }
+    }
+
+    for (i = 0; i < num_fils; i++) {
+        if (tasques[i].millor_text != NULL) {
+            free(tasques[i].millor_text);
+        }
+    }
+    free(tasques);
+    free(fils);
+    free(text_xifrat);
+
+    return 0;
+}

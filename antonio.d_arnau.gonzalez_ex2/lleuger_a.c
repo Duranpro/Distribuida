@@ -4,38 +4,42 @@
 #include <unistd.h>
 #include <signal.h>
 #include <errno.h>
-#include <time.h>
 #include <sys/socket.h>
 #include <sys/select.h>
 
 typedef struct {
-    int servidor, pesant, connexio, companys[3];
+    int servidor;
+    int pesant;
+    int connexio;
+    int companys[3];
 } RecursosLleuger;
 
 int executar_lleuger_a(RecursosLleuger *recursos) {
-    int i = 0, maxim = 0, resultat = 0;
+    int i = 0, maxim = 0, resultat = 0, mida = 0;
+    char text[64] = {0};
     int cua[3] = {-1, -1, -1}, confirmacions[3] = {0};
-    int demanant = 0, escrivint = 0, linies = 0, temps = 0;
+    int demanant = 0, temps = 0;
     fd_set lectura = {0};
-    struct timeval espera = {0};
-    struct timespec instant = {0}, propera_linia = {0};
     Missatge missatge = {0};
     RellotgeDirecte rellotge = {{0, 0, 0}, IDENTIFICADOR};
     RellotgeLamport control = {0};
 
     signal(SIGPIPE, SIG_IGN);
-    recursos->servidor = crear_servidor(5100 + IDENTIFICADOR);
-    if (recursos->servidor < 0) {
-        perror("servidor lightweight A");
-        return 1;
+    /* A3 nomes inicia connexions: no necessita servidor. */
+    if (IDENTIFICADOR < 2) {
+        recursos->servidor = crear_servidor(PORT_A_BASE + IDENTIFICADOR);
+        if (recursos->servidor < 0) {
+            perror("servidor lightweight A");
+            return 1;
+        }
     }
-    recursos->pesant = connectar(5000);
+    recursos->pesant = connectar(PORT_PESANT_A);
     if (recursos->pesant < 0 || enviar(recursos->pesant, IDENTITAT, IDENTIFICADOR, 0) < 0) {
         return 1;
     }
     /* Un sol canal TCP bidireccional per parella, sempre iniciat pel major. */
     for (i = 0; i < IDENTIFICADOR; i++) {
-        recursos->companys[i] = connectar(5100 + i);
+        recursos->companys[i] = connectar(PORT_A_BASE + i);
         if (recursos->companys[i] < 0 || enviar(recursos->companys[i], IDENTITAT, IDENTIFICADOR, 0) < 0) {
             return 1;
         }
@@ -51,8 +55,10 @@ int executar_lleuger_a(RecursosLleuger *recursos) {
         recursos->companys[missatge.origen] = recursos->connexio;
         recursos->connexio = -1;
     }
-    close(recursos->servidor);
-    recursos->servidor = -1;
+    if (recursos->servidor >= 0) {
+        close(recursos->servidor);
+        recursos->servidor = -1;
+    }
     while (1) {
         FD_ZERO(&lectura);
         FD_SET(recursos->pesant, &lectura);
@@ -65,10 +71,7 @@ int executar_lleuger_a(RecursosLleuger *recursos) {
                 }
             }
         }
-        /* El temporitzador permet contestar REQUEST durant les deu impressions. */
-        espera.tv_sec = 0;
-        espera.tv_usec = 100000;
-        resultat = select(maxim + 1, &lectura, NULL, NULL, &espera);
+        resultat = select(maxim + 1, &lectura, NULL, NULL, NULL);
         if (resultat < 0) {
             if (errno == EINTR) {
                 continue;
@@ -76,7 +79,7 @@ int executar_lleuger_a(RecursosLleuger *recursos) {
             return 1;
         }
         if (FD_ISSET(recursos->pesant, &lectura)) {
-            if (rebre(recursos->pesant, &missatge) < 0 || missatge.tipus != INICI || demanant || escrivint) {
+            if (rebre(recursos->pesant, &missatge) < 0 || missatge.tipus != INICI || demanant) {
                 return 1;
             }
             rebre_lamport(&control, missatge.temps);
@@ -115,35 +118,24 @@ int executar_lleuger_a(RecursosLleuger *recursos) {
                 return 1;
             }
         }
-        if (demanant && !escrivint && pot_entrar(&rellotge, cua, confirmacions)) {
-            escrivint = 1;
-            linies = 0;
-            clock_gettime(CLOCK_MONOTONIC, &propera_linia);
-        }
-        if (escrivint) {
-            clock_gettime(CLOCK_MONOTONIC, &instant);
-            if (instant.tv_sec > propera_linia.tv_sec || (instant.tv_sec == propera_linia.tv_sec && instant.tv_nsec >= propera_linia.tv_nsec)) {
-                if (linies < 10) {
-                    printf("I'm lightweight process A%d\n", IDENTIFICADOR + 1);
-                    fflush(stdout);
-                    linies++;
-                    propera_linia = instant;
-                    propera_linia.tv_sec++;
-                } else {
-                    cua[IDENTIFICADOR] = -1;
-                    avancar_directe(&rellotge);
-                    for (i = 0; i < 3; i++) {
-                        if (i != IDENTIFICADOR && enviar(recursos->companys[i], RELEASE, IDENTIFICADOR, rellotge.valors[IDENTIFICADOR]) < 0) {
-                            return 1;
-                        }
-                    }
-                    demanant = 0;
-                    escrivint = 0;
-                    avancar_lamport(&control);
-                    if (enviar(recursos->pesant, FI, IDENTIFICADOR, control.valor) < 0) {
-                        return 1;
-                    }
+        if (demanant && pot_entrar(&rellotge, cua, confirmacions)) {
+            /* Durant aquest bloc, els missatges queden pendents als sockets. */
+            for (i = 0; i < 10; i++) {
+                mida = snprintf(text, sizeof(text), "I'm lightweight process A%d\n", IDENTIFICADOR + 1);
+                write(STDOUT_FILENO, text, mida);
+                sleep(1);
+            }
+            cua[IDENTIFICADOR] = -1;
+            avancar_directe(&rellotge);
+            for (i = 0; i < 3; i++) {
+                if (i != IDENTIFICADOR && enviar(recursos->companys[i], RELEASE, IDENTIFICADOR, rellotge.valors[IDENTIFICADOR]) < 0) {
+                    return 1;
                 }
+            }
+            demanant = 0;
+            avancar_lamport(&control);
+            if (enviar(recursos->pesant, FI, IDENTIFICADOR, control.valor) < 0) {
+                return 1;
             }
         }
     }

@@ -1,0 +1,209 @@
+/* 
+ * Usuaris: arnau.gonzalez y antonio.d
+ * Noms i Cognoms: Arnau Gonzalez y Toni Duran
+ */
+
+#define _GNU_SOURCE
+#include <unistd.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <sys/wait.h>
+#include <time.h>
+
+#include "S3_library.h"
+
+void executar_recollector(int id_director, int index_treballador) {
+    char *nom_fitxer = NULL, *contingut = NULL;
+    int fd = -1, quantitat_especia = 0;
+
+    srand((unsigned)getpid());// Utilitza el pid per cambiar la llavor de cada worker perque sino tenen el mateix numero
+    quantitat_especia = rand() % 101;
+
+    asprintf(&nom_fitxer, "worker_%d_%d.txt", id_director, index_treballador);
+    if (nom_fitxer == NULL) {
+        exit(1);
+    }
+
+    fd = open(nom_fitxer, O_WRONLY | O_CREAT | O_TRUNC, 0666); //Obre el fitxer per escriure, el crea si no existeix i esborra el contingut anterior
+    if (fd >= 0) {
+        asprintf(&contingut, "%d\n", quantitat_especia);
+        if (contingut != NULL) {
+            write(fd, contingut, strlen(contingut));
+            free(contingut);
+        }
+        close(fd);
+    }
+
+    free(nom_fitxer);
+    exit(0);
+}
+
+void executar_director(Sector sector) {
+    char *nom_fitxer = NULL, *contingut = NULL, *flag_text = NULL;
+    char *args[4];
+    int i = 0, pid_worker = 0, pid_shai = 0, status = 0;
+    int total_produccio = 0, fd = -1;
+
+    for (i = 0; i < sector.num_workers; i++) {
+        pid_worker = fork();
+
+        if (pid_worker < 0) {
+            write(1, "Error creating the fork\n", strlen("Error creating the fork\n"));
+            exit(1);
+        } else if (pid_worker == 0) {
+            executar_recollector(sector.director_id, i);
+        }
+    }
+
+    for (i = 0; i < sector.num_workers; i++) {
+        wait(NULL);
+    }
+
+    total_produccio = readWorkerSpice(sector.director_id, sector.num_workers);
+
+    if (total_produccio > sector.spice_target) {
+        flag_text = "1";
+    } else {
+        flag_text = "0";
+    }
+
+    pid_shai = fork();
+    if (pid_shai < 0) {
+        write(1, "Error creating the fork\n", strlen("Error creating the fork\n"));
+        exit(1);
+    } else if (pid_shai == 0) {
+        args[0] = "./shai_hulud";
+        args[1] = sector.zone_name;
+        args[2] = flag_text;
+        args[3] = NULL;
+        execv(args[0], args);
+        exit(1);
+    }
+
+    waitpid(pid_shai, &status, 0);
+
+    if (total_produccio > sector.spice_target) {
+        total_produccio = total_produccio / 2;
+    }
+
+    asprintf(&nom_fitxer, "director_%d.txt", sector.director_id);
+    if (nom_fitxer != NULL) {
+        fd = open(nom_fitxer, O_WRONLY | O_CREAT | O_TRUNC, 0666); //Obre el fitxer per escriure, el crea si no existeix i esborra el contingut anterior
+        if (fd >= 0) {
+            asprintf(&contingut, "%d\n", total_produccio);
+            if (contingut != NULL) {
+                write(fd, contingut, strlen(contingut));
+                free(contingut);
+            }
+            close(fd);
+        }
+        free(nom_fitxer);
+    }
+
+    exit(0);
+}
+
+int carregar_sectors(char *nom_fitxer, Sector **sectors, int *quantitat) {
+    Sector *llista_sectors = NULL, *temporal = NULL;
+    Sector sector_temporal;
+    int fd = -1, comptador = 0, bytes_llegits = 0;
+
+    fd = open(nom_fitxer, O_RDONLY);
+    if (fd < 0) {
+        return -1;
+    }
+
+    while (1) {
+        bytes_llegits = read(fd, &sector_temporal, sizeof(Sector));
+        if (bytes_llegits <= 0) {
+            break;
+        }
+
+        temporal = realloc(llista_sectors, (comptador + 1) * sizeof(Sector));
+        if (temporal == NULL) {
+            free(llista_sectors);
+            close(fd);
+            return -1;
+        }
+        llista_sectors = temporal;
+        llista_sectors[comptador] = sector_temporal;
+        comptador++;
+    }
+
+    close(fd);
+    *sectors = llista_sectors;
+    *quantitat = comptador;
+    return 0;
+}
+
+int main(int argc, char *argv[]) {
+    Sector *sectors = NULL;
+    char *linia = NULL;
+    int quantitat_sectors = 0, i = 0, pid_director = 0;
+    int total_global = 0, collita_zona = 0;
+
+    signal(SIGINT, SIG_IGN);
+
+    if (argc != 2) {
+        asprintf(&linia, "usage: ./S3 <sectors.bin>\n");
+        if (linia != NULL) {
+            write(1, linia, strlen(linia));
+            free(linia);
+        }
+        return 1;
+    }
+
+    if (carregar_sectors(argv[1], &sectors, &quantitat_sectors) < 0) {
+        write(1, "Error opening binary file\n", strlen("Error opening binary file\n"));
+        return 1;
+    }
+
+    write(1, "[paul]  Beginning spice harvesting operations on Arrakis.\n\n", strlen("[paul]  Beginning spice harvesting operations on Arrakis.\n\n"));
+
+    for (i = 0; i < quantitat_sectors; i++) {
+        pid_director = fork();
+
+        if (pid_director < 0) {
+            write(1, "Error creating the fork\n", strlen("Error creating the fork\n"));
+            free(sectors);
+            return 1;
+        } else if (pid_director == 0) {
+            executar_director(sectors[i]);
+        }
+    }
+
+    for (i = 0; i < quantitat_sectors; i++) {
+        wait(NULL);
+    }
+
+    write(1, "\n[paul]  Harvesting complete. Tallying spice production...\n\n", strlen("\n[paul]  Harvesting complete. Tallying spice production...\n\n"));
+
+    for (i = 0; i < quantitat_sectors; i++) {
+        collita_zona = readDirectorSpice(sectors[i].director_id);
+        total_global = total_global + collita_zona;
+
+        if (readWorkerSpice(sectors[i].director_id, sectors[i].num_workers) > sectors[i].spice_target) {
+            asprintf(&linia, "[paul]  Zone %s - Spice harvested: %d (WORM ALERT: yield penalized)\n", sectors[i].zone_name, collita_zona);
+        } else {
+            asprintf(&linia, "[paul]  Zone %s - Spice harvested: %d\n", sectors[i].zone_name, collita_zona);
+        }
+
+        if (linia != NULL) {
+            write(1, linia, strlen(linia));
+            free(linia);
+            linia = NULL;
+        }
+    }
+
+    asprintf(&linia, "\n[paul]  Total spice production: %d\n", total_global);
+    if (linia != NULL) {
+        write(1, linia, strlen(linia));
+        free(linia);
+    }
+
+    free(sectors);
+    return 0;
+}

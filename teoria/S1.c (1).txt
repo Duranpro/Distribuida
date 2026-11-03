@@ -1,0 +1,521 @@
+/* 
+ * Usuaris: arnau.gonzalez y antonio.d
+ * Noms i Cognoms: Arnau Gonzalez y Toni Duran
+ */
+
+#define _GNU_SOURCE
+#include <fcntl.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <signal.h>
+
+#include "auction_support.h"
+
+#define RED "\x1B[31m"
+#define GREEN "\x1B[32m"
+#define YELLOW "\x1B[33m"
+#define BLUE "\x1B[34m"
+#define MAGENTA "\x1B[35m"
+#define CYAN "\x1B[36m"
+#define RESET "\x1B[0m"
+
+#define SIG_PUJAR 1
+#define SIG_PASSAR 2
+#define SIG_TEMPS 3
+
+typedef struct {
+    char *nom;
+    int diners;
+    int *inventari;
+    int quantitat_productes;
+} Jugador;
+
+// Globals necessaries per al control de les senyals.
+int accio_senyal = 0;
+int temps_restants = 10;
+int subhasta_activa = 0;
+int finalitzar = 0;
+
+void gestionar_sigterm(void) {
+    finalitzar = 1;
+    alarm(0);
+}
+
+void gestionar_sigusr1(void) {
+    if (subhasta_activa == 1) {
+        accio_senyal = SIG_PUJAR;
+        alarm(0);
+    }
+}
+
+void gestionar_sigusr2(void) {
+    if (subhasta_activa == 1) {
+        accio_senyal = SIG_PASSAR;
+        alarm(0);
+    }
+}
+
+void gestionar_sigalrm(void) {
+    char *linia = NULL;
+
+    if (subhasta_activa == 1) {
+        temps_restants = temps_restants - 1;
+
+        asprintf(&linia, "Tiempo restante: %d\n", temps_restants);
+        write(1, linia, strlen(linia));
+        free(linia);
+
+        if (temps_restants <= 0) {
+            accio_senyal = SIG_TEMPS;
+        } else {
+            alarm(1);
+        }
+    }
+}
+
+void gestionar_sigint(void) {
+    char *linia = NULL;
+
+    asprintf(&linia, "PID: %d | SIGUSR1 pujar | SIGUSR2 pasar | SIGTERM salir\n", getpid());
+
+    write(1, linia, strlen(linia));
+    free(linia);
+}
+void gestionar_senyal(int senyal) {
+    switch (senyal) {
+        case SIGTERM:
+            gestionar_sigterm();
+            break;
+        case SIGUSR1:
+            gestionar_sigusr1();
+            break;
+        case SIGUSR2:
+            gestionar_sigusr2();
+            break;
+        case SIGALRM:
+            gestionar_sigalrm();
+            break;
+        case SIGINT:
+            gestionar_sigint();
+            break;
+        default:
+            break;
+    }
+}
+
+char *llegir_linia(void) {
+    char *text = NULL, *temporal = NULL;
+    char caracter = '\0';
+    int longitud = 0, bytes_llegits = 0;
+
+    text = malloc(1);
+    if (text == NULL) {
+        return NULL;
+    }
+
+    text[0] = '\0';
+
+    while (1) {
+        bytes_llegits = read(0, &caracter, 1);
+
+        if (bytes_llegits <= 0) {
+            free(text);
+            return NULL;
+        }
+
+        if (caracter == '\n') {
+            break;
+        }
+
+        temporal = realloc(text, longitud + 2);
+        if (temporal == NULL) {
+            free(text);
+            return NULL;
+        }
+
+        text = temporal;
+        text[longitud] = caracter;
+        longitud++;
+        text[longitud] = '\0';
+    }
+
+    return text;
+}
+
+int es_diner_valid(char *text) {
+    int i = 0;
+
+    if (text[0] == '\0') {
+        return 0;
+    }
+
+    while (text[i] != '\0') {
+        if (text[i] < '0' || text[i] > '9') {
+            return 0;
+        }
+        i++;
+    }
+
+    if (atoi(text) <= 0) {
+        return 0;
+    }
+
+    return 1;
+}
+
+int crear_jugadors(Jugador *jugadors) {
+    char *entrada = NULL;
+    int i = 0;
+
+    for (i = 0; i < 2; i++) {
+        write(1, "Nombre del jugador: ", strlen("Nombre del jugador: "));
+
+        while (1) {
+            entrada = llegir_linia();
+
+            if (entrada == NULL) {
+                if (finalitzar == 1) {
+                    return -1;
+                }
+            } else if (entrada[0] == '\0') {
+                free(entrada);
+                entrada = NULL;
+                write(1, "El nombre no puede estar vacio. Intentalo de nuevo.\n", strlen("El nombre no puede estar vacio. Intentalo de nuevo.\n"));
+                write(1, "Nombre del jugador: ", strlen("Nombre del jugador: "));
+            } else {
+                jugadors[i].nom = entrada;
+                entrada = NULL;
+                break;
+            }
+        }
+
+        write(1, "Dinero disponible: ", strlen("Dinero disponible: "));
+
+        while (1) {
+            entrada = llegir_linia();
+
+            if (entrada == NULL) {
+                if (finalitzar == 1) {
+                    return -1;
+                }
+            } else if (es_diner_valid(entrada) == 0) {
+                free(entrada);
+                entrada = NULL;
+                write(1, "Introduce un numero valido (mayor que 0).\n", strlen("Introduce un numero valido (mayor que 0).\n"));
+                write(1, "Dinero disponible: ", strlen("Dinero disponible: "));
+            } else {
+                jugadors[i].diners = atoi(entrada);
+                free(entrada);
+                entrada = NULL;
+                break;
+            }
+        }
+
+        jugadors[i].inventari = NULL;
+        jugadors[i].quantitat_productes = 0;
+    }
+
+    write(1, "Jugadores creados correctamente.\n", strlen("Jugadores creados correctamente.\n"));
+
+    return 0;
+}
+
+void mostrar_menu(int jugadors_creats) {
+    write(1, "\n===== SUBASTA =====\n", strlen("\n===== SUBASTA =====\n"));
+
+    if (jugadors_creats == 0) {
+        write(1, "1. Crear jugadores\n", strlen("1. Crear jugadores\n"));
+    } else {
+        write(1, "1. Crear jugadores [no disponible]\n", strlen("1. Crear jugadores [no disponible]\n"));
+    }
+
+    write(1, "2. Iniciar subasta\n", strlen("2. Iniciar subasta\n"));
+    write(1, "3. Ver inventarios\n", strlen("3. Ver inventarios\n"));
+    write(1, "Opcion: ", strlen("Opcion: "));
+}
+
+void mostrar_inventaris(Jugador *jugadors) {
+    char *linia = NULL;
+    int i = 0, j = 0;
+
+    for (i = 0; i < 2; i++) {
+        if (i == 0) {
+            asprintf(&linia, GREEN "Inventario de %s. Dinero restante: %d\n" RESET, jugadors[i].nom, jugadors[i].diners);
+        } else {
+            asprintf(&linia, YELLOW "Inventario de %s. Dinero restante: %d\n" RESET, jugadors[i].nom, jugadors[i].diners);
+        }
+
+        write(1, linia, strlen(linia));
+        free(linia);
+
+        if (jugadors[i].quantitat_productes == 0) {
+            if (i == 0) {
+                write(1, GREEN "  Sin productos.\n" RESET, strlen(GREEN "  Sin productos.\n" RESET));
+            } else {
+                write(1, YELLOW "  Sin productos.\n" RESET, strlen(YELLOW "  Sin productos.\n" RESET));
+            }
+        } else {
+            for (j = 0; j < jugadors[i].quantitat_productes; j++) {
+                if (i == 0) {
+                    asprintf(&linia, GREEN "  %s\n" RESET, do_get_product_name(jugadors[i].inventari[j]));
+                } else {
+                    asprintf(&linia, YELLOW "  %s\n" RESET, do_get_product_name(jugadors[i].inventari[j]));
+                }
+                write(1, linia, strlen(linia));
+                free(linia);
+            }
+        }
+    }
+}
+
+int afegir_inventari(Jugador *jugador, int producte) {
+    int *temporal = NULL;
+
+    temporal = realloc(jugador->inventari, (jugador->quantitat_productes + 1) * sizeof(int));
+    if (temporal == NULL) {
+        return -1;
+    }
+
+    jugador->inventari = temporal;
+    jugador->inventari[jugador->quantitat_productes] = producte;
+    jugador->quantitat_productes++;
+    return 0;
+}
+
+int esperar_torn(void) {
+    accio_senyal = 0;
+    temps_restants = 10;
+    alarm(1);
+
+    while (accio_senyal == 0 && finalitzar == 0) {
+        pause();
+    }
+    alarm(0);
+    return accio_senyal;
+}
+
+void mostrar_torn(Jugador *jugadors, int torn, int preu) {
+    char *linia = NULL;
+
+    if (torn == 0) {
+        asprintf(&linia, GREEN "Turno de %s. Precio actual: %d\n" RESET, jugadors[torn].nom, preu);
+    } else {
+        asprintf(&linia, YELLOW "Turno de %s. Precio actual: %d\n" RESET, jugadors[torn].nom, preu);
+    }
+
+    write(1, linia, strlen(linia));
+    free(linia);
+    asprintf(&linia, "PID: %d | SIGUSR1 pujar | SIGUSR2 pasar | SIGTERM salir\n", getpid());
+    write(1, linia, strlen(linia));
+    free(linia);
+}
+
+int subhastar_producte(Jugador *jugadors, int index_producte) {
+    char *linia = NULL;
+    int preu = 0, torn = 0, ultim_pujador = -1, accio = 0;
+    int passades_consecutives = 0, acabar = 0, rival = 0, sense_diners = 0;
+
+    preu = do_get_product_price(index_producte);
+
+    asprintf(&linia, "\nProducto: %s | Precio inicial: %d\n", do_get_product_name(index_producte), preu);
+    write(1, linia, strlen(linia));
+    free(linia);
+
+    while (acabar == 0 && finalitzar == 0) {
+        mostrar_torn(jugadors, torn, preu);
+        accio = esperar_torn();
+
+        if (finalitzar == 1) {
+            return -1;
+        }
+        sense_diners = 0;
+
+        if (accio == SIG_PUJAR) {
+            if (jugadors[torn].diners >= preu + 10) {
+                preu = preu + 10;
+                ultim_pujador = torn;
+                passades_consecutives = 0;
+                if (torn == 0) {
+                    asprintf(&linia, GREEN "%s puja %d euros.\n" RESET, jugadors[torn].nom, preu);
+                } else {
+                    asprintf(&linia, YELLOW "%s puja %d euros.\n" RESET, jugadors[torn].nom, preu);
+                }
+
+                write(1, linia, strlen(linia));
+                free(linia);
+
+                if (torn == 0) {
+                    torn = 1;
+                } else {
+                    torn = 0;
+                }
+
+            } else {
+                if (torn == 0) {
+                    asprintf(&linia, GREEN "%s no tiene dinero suficiente y pasa.\n" RESET, jugadors[torn].nom);
+                } else {
+                    asprintf(&linia, YELLOW "%s no tiene dinero suficiente y pasa.\n" RESET, jugadors[torn].nom);
+                }
+                write(1, linia, strlen(linia));
+                free(linia);
+                sense_diners = 1;
+                accio = SIG_PASSAR;
+            }
+        }
+
+        if (accio == SIG_PASSAR || accio == SIG_TEMPS) {
+            if (accio == SIG_TEMPS) {
+                if (torn == 0) {
+                    asprintf(&linia, GREEN "%s pierde el turno por tiempo.\n" RESET, jugadors[torn].nom);
+                } else {
+                    asprintf(&linia, YELLOW "%s pierde el turno por tiempo.\n" RESET, jugadors[torn].nom);
+                }
+
+            } else if (accio == SIG_PASSAR && sense_diners == 0) {
+                if (torn == 0) {
+                    asprintf(&linia, GREEN "%s pasa.\n" RESET, jugadors[torn].nom);
+                } else {
+                    asprintf(&linia, YELLOW "%s pasa.\n" RESET, jugadors[torn].nom);
+                }
+            }
+
+            if (sense_diners == 0) {
+                write(1, linia, strlen(linia));
+                free(linia);
+            }
+
+            if (ultim_pujador != -1 && ultim_pujador != torn) {
+                jugadors[ultim_pujador].diners = jugadors[ultim_pujador].diners - preu;
+
+                if (afegir_inventari(&jugadors[ultim_pujador], index_producte) == -1) {
+                    return -1;
+                }
+
+                if (ultim_pujador == 0) {
+                    asprintf(&linia, GREEN "%s gana %s por %d euros.\n" RESET, jugadors[ultim_pujador].nom, do_get_product_name(index_producte), preu);
+                } else {
+                    asprintf(&linia, YELLOW "%s gana %s por %d euros.\n" RESET, jugadors[ultim_pujador].nom, do_get_product_name(index_producte), preu);
+                }
+
+                write(1, linia, strlen(linia));
+                free(linia);
+                acabar = 1;
+            } else {
+                passades_consecutives++;
+
+                if (passades_consecutives == 2) {
+                    write(1, "Producto sin comprador.\n", strlen("Producto sin comprador.\n"));
+                    acabar = 1;
+                } else {
+                    rival = 1 - torn;
+                    torn = rival;
+                }
+            }
+        }
+    }
+
+    return 0;
+}
+
+int iniciar_subhasta(Jugador *jugadors) {
+    int i = 0, quantitat_productes = 0;
+
+    quantitat_productes = do_get_product_count();
+    subhasta_activa = 1;
+
+    for (i = 0; i < quantitat_productes; i++) {
+        if (subhastar_producte(jugadors, i) == -1) {
+            subhasta_activa = 0;
+            return -1;
+        }
+    }
+
+    subhasta_activa = 0;
+    alarm(0);
+
+    return 0;
+}
+
+void alliberar_memoria(Jugador *jugadors) {
+    int i = 0;
+
+    for (i = 0; i < 2; i++) {
+        free(jugadors[i].nom);
+        free(jugadors[i].inventari);
+    }
+
+    do_free_products();
+}
+
+int main(int argc, char *argv[]) {
+    Jugador jugadors[2];
+    char *entrada = NULL, *linia = NULL;
+    int i = 0, opcio = 0, jugadors_creats = 0, subhasta_iniciada = 0;
+
+    if (argc != 2) {
+        write(2, "Uso: ./S1 productos.txt\n", strlen("Uso: ./S1 productos.txt\n"));
+        return 1;
+    }
+
+    if (do_load_products(argv[1]) == 0) {
+        write(2, "Error al cargar productos.\n", strlen("Error al cargar productos.\n"));
+        return 1;
+    }
+
+    for (i = 0; i < 2; i++) {
+        jugadors[i].inventari = NULL;
+        jugadors[i].quantitat_productes = 0;
+        jugadors[i].diners = 0;
+        jugadors[i].nom = NULL;
+    }
+
+    for (i = 1; i <= 64; i++) {
+        signal(i, gestionar_senyal);
+    }
+
+    asprintf(&linia, "PID del proceso: %d\n", getpid());
+    write(1, linia, strlen(linia));
+    free(linia);
+
+    while (finalitzar == 0) {
+        mostrar_menu(jugadors_creats);
+
+        entrada = llegir_linia();
+
+        if (entrada == NULL) {
+                if (finalitzar == 1) {
+                break;
+            }
+        } else {
+            opcio = atoi(entrada);
+            free(entrada);
+            entrada = NULL;
+
+            if (opcio == 1) {
+                if (jugadors_creats == 0) {
+                    if (crear_jugadors(jugadors) == -1) {
+                        break;
+                    }
+                    jugadors_creats = 1;
+                } else {
+                    write(1, "Los jugadores ya han sido creados.\n", strlen("Los jugadores ya han sido creados.\n"));
+                }
+            } else if (opcio == 2) {
+                if (jugadors_creats == 1 && subhasta_iniciada == 0) {
+                    subhasta_iniciada = 1;
+                    iniciar_subhasta(jugadors);
+                }
+            } else if (opcio == 3) {
+                if (jugadors_creats == 1) {
+                    mostrar_inventaris(jugadors);
+                }
+            }
+        }
+    }
+
+    alliberar_memoria(jugadors);
+
+    return 0;
+}

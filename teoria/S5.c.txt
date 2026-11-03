@@ -1,0 +1,306 @@
+/* 
+ * Usuaris: arnau.gonzalez y antonio.d
+ * Noms i Cognoms: Arnau Gonzalez y Toni Duran
+ */
+
+#define _GNU_SOURCE
+#include <unistd.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <sys/select.h>
+
+#include "market_protocol.h"
+
+#define MAX_TRADERS 5
+
+typedef struct {
+    int fd;
+    int registrat;
+    char nom[MARKET_NAME_SIZE];
+    int subscripcions[MARKET_SYMBOL_COUNT];
+} Inversor;
+
+int obtenir_index_simbol(char *cadena_simbol) {
+    int i = 0;
+
+    for (i = 0; i < MARKET_SYMBOL_COUNT; i++) {
+        if (strcmp(cadena_simbol, market_symbol_name(i)) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+void eliminar_inversor(Inversor *inversors, int *total_inversors, int posicio, fd_set *conjunt_sockets) {
+    int i = 0;
+    if (posicio < 0 || posicio >= *total_inversors) {
+        return;
+    }
+    FD_CLR(inversors[posicio].fd, conjunt_sockets);
+    close(inversors[posicio].fd);
+    for (i = posicio; i < *total_inversors - 1; i++) {
+        inversors[i] = inversors[i + 1];
+    }
+    *total_inversors = *total_inversors - 1;
+}
+
+void processar_comanda_consola(char *linia, int *preus, Inversor *inversors, int *total_inversors, fd_set *conjunt_sockets, int *executant) {
+    char comanda[32], param1[32], param2[32];
+    char *missatge = NULL, *tick_dinamic = NULL;
+    char resposta[MARKET_FRAME_SIZE];
+    int num_args = 0, preu_nou = 0, idx_simbol = -1, i = 0, traders_actius = 0;
+
+    memset(comanda, 0, sizeof(comanda));
+    memset(param1, 0, sizeof(param1));
+    memset(param2, 0, sizeof(param2));
+
+    num_args = sscanf(linia, "%31s %31s %31s", comanda, param1, param2);
+    if (num_args <= 0) {
+        return;
+    }
+
+    if (strcmp(comanda, "STATUS") == 0) {
+        asprintf(&missatge, "=== LS500 STATUS ===\n");
+        write(1, missatge, strlen(missatge));
+        free(missatge);
+
+        for (i = 0; i < MARKET_SYMBOL_COUNT; i++) {
+            if (preus[i] >= 0) {
+                asprintf(&missatge, "%s: %d\n", market_symbol_name(i), preus[i]);
+            } else {
+                asprintf(&missatge, "%s: N/A\n", market_symbol_name(i));
+            }
+            write(1, missatge, strlen(missatge));
+            free(missatge);
+        }
+
+        traders_actius = 0;
+        for (i = 0; i < *total_inversors; i++) {
+            if (inversors[i].registrat == 1) {
+                traders_actius = traders_actius + 1;
+            }
+        }
+
+        asprintf(&missatge, "Traders connected: %d\n", traders_actius);
+        write(1, missatge, strlen(missatge));
+        free(missatge);
+
+        for (i = 0; i < *total_inversors; i++) {
+            if (inversors[i].registrat == 1) {
+                asprintf(&missatge, " - %s\n", inversors[i].nom);
+                write(1, missatge, strlen(missatge));
+                free(missatge);
+            }
+        }
+    } else if (strcmp(comanda, "PRICE") == 0) {
+        if (num_args == 3) {
+            idx_simbol = obtenir_index_simbol(param1);
+            preu_nou = atoi(param2);
+            if (idx_simbol != -1 && preu_nou > 0) {
+                preus[idx_simbol] = preu_nou;
+                asprintf(&tick_dinamic, "TICK:%s:%d", market_symbol_name(idx_simbol), preu_nou);
+                if (tick_dinamic != NULL) {
+                    memset(resposta, 0, sizeof(resposta));
+                    strncpy(resposta, tick_dinamic, sizeof(resposta) - 1);
+                    free(tick_dinamic);
+
+                    for (i = 0; i < *total_inversors; i++) {
+                        if (inversors[i].registrat == 1 && inversors[i].subscripcions[idx_simbol] == 1) {
+                            market_send_frame(inversors[i].fd, resposta);
+                        }
+                    }
+                }
+            }
+        }
+    } else if (strcmp(comanda, "CLOSE") == 0) {
+        memset(resposta, 0, sizeof(resposta));
+        strcpy(resposta, "MARKET:CLOSED");
+        for (i = 0;i<*total_inversors; i++) {
+            market_send_frame(inversors[i].fd, resposta);
+            close(inversors[i].fd);
+            FD_CLR(inversors[i].fd, conjunt_sockets);
+        }
+        *total_inversors = 0;
+        *executant = 0;
+    }
+}
+
+int main(int argc, char *argv[]) {
+    struct sockaddr_in adr_servidor;
+    fd_set sockets_actius, sockets_preparats;
+    Inversor llista_inversors[MAX_TRADERS];
+    char buffer_trama[MARKET_FRAME_SIZE];
+    char buffer_linia[256];
+    char resposta[MARKET_FRAME_SIZE];
+    char nom_temp[MARKET_NAME_SIZE];
+    char *ip = NULL, *arg_simbol = NULL;
+    int preus[MARKET_SYMBOL_COUNT];
+    int port = 0, fd_escolta = -1, fd_nou_client = -1, max_fd = 0;
+    int total_inversors = 0, executant = 1, activitat = 0, i = 0, j = 0;
+    int estat_lectura = 0, idx_simbol = -1, nom_duplicat = 0;
+
+    if (argc != 3) {
+        write(1, "Usage: ./S5 <ip> <port>\n", strlen("Usage: ./S5 <ip> <port>\n"));
+        return 1;
+    }
+
+    signal(SIGINT, SIG_IGN);
+    ip = argv[1];
+    port = atoi(argv[2]);
+    for (i = 0; i < MARKET_SYMBOL_COUNT; i++) {
+        preus[i] = -1;
+    }
+    fd_escolta = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd_escolta < 0) {
+        return 1;
+    }
+    memset(&adr_servidor, 0, sizeof(adr_servidor));
+    adr_servidor.sin_family = AF_INET;
+    adr_servidor.sin_port = htons(port);
+    if (inet_pton(AF_INET, ip, &adr_servidor.sin_addr) <= 0) {
+        close(fd_escolta);
+        return 1;
+    }
+
+    if (bind(fd_escolta,(struct sockaddr *)&adr_servidor,sizeof(adr_servidor)) < 0) {
+        close(fd_escolta);
+        return 1;
+    }
+
+    if (listen(fd_escolta, 10) < 0) {
+        close(fd_escolta);
+        return 1;
+    }
+
+    FD_ZERO(&sockets_actius);
+    FD_SET(0, &sockets_actius);
+    FD_SET(fd_escolta, &sockets_actius);
+    max_fd = fd_escolta;
+
+    while (executant) {
+        sockets_preparats = sockets_actius;
+        activitat = select(max_fd + 1, &sockets_preparats, NULL, NULL, NULL);
+        if (activitat < 0) {
+            continue;
+        }
+        if (FD_ISSET(0, &sockets_preparats)) {
+            memset(buffer_linia,0, sizeof(buffer_linia));
+            estat_lectura = market_read_line(0, buffer_linia, sizeof(buffer_linia));
+            if (estat_lectura > 0) {
+                processar_comanda_consola(buffer_linia, preus, llista_inversors, &total_inversors, &sockets_actius, &executant);
+            }
+        }
+
+        // nova connexio entrant de un socket
+        if (executant && FD_ISSET(fd_escolta, &sockets_preparats)) {
+            fd_nou_client = accept(fd_escolta, NULL, NULL);
+            if (fd_nou_client>=0) {
+                if (total_inversors >= MAX_TRADERS) {
+                    memset(resposta, 0, sizeof(resposta));
+                    strcpy(resposta, "ERROR:MARKET_FULL");
+                    market_send_frame(fd_nou_client, resposta);
+                    close(fd_nou_client);
+                } else {
+                    llista_inversors[total_inversors].fd = fd_nou_client;
+                    llista_inversors[total_inversors].registrat = 0;
+                    memset(llista_inversors[total_inversors].nom, 0, MARKET_NAME_SIZE);
+                    for (i = 0; i < MARKET_SYMBOL_COUNT; i++) {
+                        llista_inversors[total_inversors].subscripcions[i] = 0;
+                    }
+                    total_inversors=total_inversors+1;
+
+                    FD_SET(fd_nou_client, &sockets_actius);
+                    if (fd_nou_client > max_fd) {
+                        max_fd = fd_nou_client;
+                    }
+                }
+            }
+        }
+        // activitat en sockets de inversors existents
+        for (i = 0; i < total_inversors && executant; i++) {
+            if (FD_ISSET(llista_inversors[i].fd, &sockets_preparats)) {
+                memset(buffer_trama, 0, sizeof(buffer_trama));
+                estat_lectura = market_read_frame(llista_inversors[i].fd, buffer_trama);
+
+                if (estat_lectura <= 0) {
+                    eliminar_inversor(llista_inversors, &total_inversors, i, &sockets_actius);
+                    i--;
+                } else {
+                    if (llista_inversors[i].registrat == 0) {
+                        //HELLO:<nom>
+                        if (strncmp(buffer_trama, "HELLO:", 6) == 0) {
+                            memset(nom_temp, 0, sizeof(nom_temp));
+                            strncpy(nom_temp, buffer_trama + 6, MARKET_NAME_SIZE - 1);
+                            nom_duplicat = 0;
+                            for (j = 0; j < total_inversors; j++) {
+                                if (llista_inversors[j].registrat == 1&&strcmp(llista_inversors[j].nom, nom_temp) == 0) {
+                                    nom_duplicat = 1;
+                                    break;
+                                }
+                            }
+                            if (nom_duplicat == 1) {
+                                memset(resposta, 0, sizeof(resposta));
+                                strcpy(resposta, "ERROR:NAME_EXISTS");
+                                market_send_frame(llista_inversors[i].fd, resposta);
+                                eliminar_inversor(llista_inversors, &total_inversors, i, &sockets_actius);
+                                i--;
+                            } else {
+                                strncpy(llista_inversors[i].nom, nom_temp, MARKET_NAME_SIZE - 1);
+                                llista_inversors[i].nom[MARKET_NAME_SIZE - 1] = '\0';
+                                llista_inversors[i].registrat=1;
+                                memset(resposta, 0, sizeof(resposta));
+                                strcpy(resposta, "WELCOME:");
+                                strcat(resposta, nom_temp);
+                                market_send_frame(llista_inversors[i].fd, resposta);
+                            }
+                        } else {
+                            eliminar_inversor(llista_inversors, &total_inversors, i, &sockets_actius);
+                            i--;
+                        }
+                    } else {
+                        // comandes per a inversor ja registrat
+                        if (strncmp(buffer_trama, "SUB:", 4)==0) {
+                            arg_simbol = buffer_trama + 4;
+                            idx_simbol = obtenir_index_simbol(arg_simbol);
+                            if (idx_simbol != -1) {
+                                llista_inversors[i].subscripcions[idx_simbol] = 1;
+                                memset(resposta, 0, sizeof(resposta));
+                                strcpy(resposta, "SUBSCRIBED:");
+                                strcat(resposta, market_symbol_name(idx_simbol));
+                                market_send_frame(llista_inversors[i].fd, resposta);
+                            }
+                        } else if (strncmp(buffer_trama, "UNSUB:", 6) == 0) {
+                            arg_simbol = buffer_trama + 6;
+                            idx_simbol = obtenir_index_simbol(arg_simbol);
+                            if (idx_simbol != -1) {
+                                llista_inversors[i].subscripcions[idx_simbol] = 0;
+                                memset(resposta, 0, sizeof(resposta));
+                                strcpy(resposta, "UNSUBSCRIBED:");
+                                strcat(resposta, market_symbol_name(idx_simbol));
+                                market_send_frame(llista_inversors[i].fd, resposta);
+                            }
+                        } else if (strcmp(buffer_trama, "QUIT") == 0) {
+                            eliminar_inversor(llista_inversors, &total_inversors, i, &sockets_actius);
+                            i--;
+                        }
+                    }
+                }
+            }
+        }
+        // recalcular el descriptor maxim per a select()
+        max_fd = fd_escolta;
+        for (i=0; i < total_inversors; i++) {
+            if (llista_inversors[i].fd > max_fd) {
+                max_fd = llista_inversors[i].fd;
+            }
+        }
+    }
+
+    close(fd_escolta);
+    return 0;
+}

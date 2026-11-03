@@ -28,9 +28,7 @@ void rebre_directe(RellotgeDirecte *rellotge, int origen, int temps) {
 int pot_entrar(RellotgeDirecte *rellotge, int *cua, int *confirmacions) {
     int i = 0, propi = rellotge->identificador, temps = cua[propi];
 
-    if (temps < 0) {
-        return 0;
-    }
+    /* L'unic cridador te una peticio propia activa (demanant). */
     for (i = 0; i < 3; i++) {
         if (i == propi) {
             continue;
