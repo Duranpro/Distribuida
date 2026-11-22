@@ -1,0 +1,8 @@
+*.o
+/replica
+/client
+/web
+/iniciar
+/A[123].txt
+/B[12].txt
+/C[12].txt
