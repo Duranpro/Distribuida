@@ -38,7 +38,7 @@ int main(void) {
             if (i == NODES) {
                 execv(args_web[0], args_web);
             } else {
-                args_replica[1] = (char *)noms[NODES - 1 - i];
+                args_replica[1] = noms[NODES - 1 - i];
                 execv(args_replica[0], args_replica);
             }
             perror("execv");

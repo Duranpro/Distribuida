@@ -23,13 +23,13 @@ typedef struct {
     int lectures[MAX_OPERACIONS];
 } Estat;
 
-extern const char *noms[NODES];
+extern char *noms[NODES];
 
 int crear_servidor(int port);
 int connectar(int port);
-int enviar(int fd, const int *dades, int quantitat);
+int enviar(int fd, int *dades, int quantitat);
 int rebre(int fd, int *dades, int quantitat);
-int demanar(int node, const Peticio *p, Estat *estat);
-int enviar_estat(int fd, const Estat *estat);
+int demanar(int node, Peticio *p, Estat *estat);
+int enviar_estat(int fd, Estat *estat);
 int rebre_estat(int fd, Estat *estat);
 #endif

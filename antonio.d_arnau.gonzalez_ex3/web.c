@@ -9,9 +9,9 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-int escriure(int fd, const void *dades, size_t mida) {
-    const char *pos = dades;
-    ssize_t n = 0;
+int escriure(int fd, void *dades, int mida) {
+    char *pos = dades;
+    int n = 0;
 
     while (mida > 0) {
         n = write(fd, pos, mida);
@@ -19,13 +19,14 @@ int escriure(int fd, const void *dades, size_t mida) {
             return -1;
         }
         pos += n;
-        mida -= (size_t)n;
+        mida -= n;
     }
     return 0;
 }
 
-int trama(int fd, const char *text) {
-    size_t mida = strlen(text);
+int trama(int fd, char *text) {
+    int mida = strlen(text);
+    /* La capcalera WebSocket es transmet com a bytes binaris. */
     unsigned char cap[4] = {129, 126, (unsigned char)(mida >> 8), (unsigned char)mida};
     int bytes = 4;
 
@@ -33,17 +34,17 @@ int trama(int fd, const char *text) {
         cap[1] = (unsigned char)mida;
         bytes = 2;
     }
-    if (escriure(fd, cap, (size_t)bytes) < 0) {
+    if (escriure(fd, cap, bytes) < 0) {
         return -1;
     }
     return escriure(fd, text, mida);
 }
 
-void estat_json(char *text, size_t capacitat) {
+void estat_json(char *text, int capacitat) {
     Estat estats[NODES] = {0};
     int node = 0, clau = 0, primer = 0, fd = connectar(PORT_BASE);
     int cap[3] = {MONITOR, 0, 0};
-    size_t usats = 0;
+    int usats = 0;
 
     if (fd >= 0 && enviar(fd, cap, 3) == 0) {
         while (node < NODES && rebre_estat(fd, &estats[node]) == 0) {
@@ -60,7 +61,7 @@ void estat_json(char *text, size_t capacitat) {
         if (node > 0) {
             text[usats++] = ',';
         }
-        usats += (size_t)snprintf(text + usats, capacitat - usats,
+        usats += snprintf(text + usats, capacitat - usats,
                 "\"%s\":{\"version\":%d,\"data\":{",
                 noms[node], estats[node].versio);
         primer = 1;
@@ -68,7 +69,7 @@ void estat_json(char *text, size_t capacitat) {
             if (!primer) {
                 text[usats++] = ',';
             }
-            usats += (size_t)snprintf(text + usats, capacitat - usats,
+            usats += snprintf(text + usats, capacitat - usats,
                     "\"%d\":%d", estats[node].claus[clau], estats[node].valors[clau]);
             primer = 0;
         }
@@ -79,7 +80,7 @@ void estat_json(char *text, size_t capacitat) {
     text[usats] = '\0';
 }
 
-void monitor(int fd, const char *key) {
+void monitor(int fd, char *key) {
     char acceptacio[29], resposta[200], text[16000], anterior[16000] = "";
     int mida = 0;
     fd_set lectura;
@@ -89,7 +90,7 @@ void monitor(int fd, const char *key) {
     mida = snprintf(resposta, sizeof(resposta), "HTTP/1.1 101 Switching Protocols\r\n"
                     "Upgrade: websocket\r\nConnection: Upgrade\r\n"
                     "Sec-WebSocket-Accept: %s\r\n\r\n", acceptacio);
-    if (escriure(fd, resposta, (size_t)mida) < 0) {
+    if (escriure(fd, resposta, mida) < 0) {
         return;
     }
     while (1) {
@@ -110,11 +111,11 @@ void monitor(int fd, const char *key) {
     }
 }
 
-void servir_fitxer(int fd, const char *nom, const char *tipus) {
+void servir_fitxer(int fd, char *nom, char *tipus) {
     FILE *fitxer = fopen(nom, "rb");
     char cap[200], dades[4096];
     int mida_cap = 0;
-    size_t mida = 0;
+    int mida = 0;
 
     if (!fitxer) {
         return;
@@ -122,7 +123,7 @@ void servir_fitxer(int fd, const char *nom, const char *tipus) {
     mida_cap = snprintf(cap, sizeof(cap),
                         "HTTP/1.1 200 OK\r\nContent-Type: %s; charset=utf-8\r\n"
                         "Connection: close\r\n\r\n", tipus);
-    if (escriure(fd, cap, (size_t)mida_cap) == 0) {
+    if (escriure(fd, cap, mida_cap) == 0) {
         while ((mida = fread(dades, 1, sizeof(dades), fitxer)) > 0) {
             if (escriure(fd, dades, mida) < 0) {
                 break;
@@ -134,15 +135,15 @@ void servir_fitxer(int fd, const char *nom, const char *tipus) {
 
 void atendre(int fd) {
     char peticio[4096] = "", *key = NULL, *final = NULL;
-    size_t usats = 0;
-    ssize_t n = 0;
+    int usats = 0;
+    int n = 0;
 
-    while (!strstr(peticio, "\r\n\r\n") && usats < sizeof(peticio) - 1) {
+    while (!strstr(peticio, "\r\n\r\n") && usats < (int)sizeof(peticio) - 1) {
         n = read(fd, peticio + usats, sizeof(peticio) - 1 - usats);
         if (n <= 0) {
             return;
         }
-        usats += (size_t)n;
+        usats += n;
         peticio[usats] = '\0';
     }
     if (strncmp(peticio, "GET /versions ", 14) == 0) {

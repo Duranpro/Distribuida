@@ -11,9 +11,10 @@ uint32_t rotar(uint32_t valor, int bits) {
    La clau HTTP validada te 24 caracters i el sufix fix en te 36.
    SHA-1 processa aquests 60 bytes en dos blocs de 64 bytes.
    Aquest calcul nomes prepara Sec-WebSocket-Accept. */
-void acceptar_websocket(const char *clau, char resposta[29]) {
-    const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+void acceptar_websocket(char *clau, char resposta[29]) {
+    char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     unsigned char dades[128] = {0}, resum[20] = {0};
+    /* SHA-1 necessita paraules de 32 bits sense signe i sumes modul 2^32. */
     uint32_t h[5] = {0x67452301U, 0xefcdab89U, 0x98badcfeU, 0x10325476U, 0xc3d2e1f0U};
     uint32_t w[80] = {0};
     uint32_t a = 0, b = 0, c = 0, d = 0, e = 0, f = 0, k = 0, nou = 0, grup = 0;

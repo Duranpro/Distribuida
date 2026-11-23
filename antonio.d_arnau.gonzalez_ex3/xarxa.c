@@ -4,7 +4,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-const char *noms[NODES] = {"A1", "A2", "A3", "B1", "B2", "C1", "C2"};
+char *noms[NODES] = {"A1", "A2", "A3", "B1", "B2", "C1", "C2"};
 
 int crear_servidor(int port) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -40,9 +40,9 @@ int connectar(int port) {
     return fd;
 }
 
-int transferir(int fd, void *dades, size_t mida, int escriure) {
+int transferir(int fd, void *dades, int mida, int escriure) {
     char *pos = dades;
-    ssize_t n = 0;
+    int n = 0;
 
     while (mida > 0) {
         if (escriure) {
@@ -57,17 +57,17 @@ int transferir(int fd, void *dades, size_t mida, int escriure) {
             return -1;
         }
         pos += n;
-        mida -= (size_t)n;
+        mida -= n;
     }
     return 0;
 }
 
-int enviar(int fd, const int *dades, int quantitat) {
-    uint32_t enter = 0;
+int enviar(int fd, int *dades, int quantitat) {
+    int enter = 0;
     int i = 0;
 
     for (i = 0; i < quantitat; i++) {
-        enter = htonl((uint32_t)dades[i]);
+        enter = htonl(dades[i]);
         if (transferir(fd, &enter, sizeof(enter), 1) < 0) {
             return -1;
         }
@@ -76,19 +76,19 @@ int enviar(int fd, const int *dades, int quantitat) {
 }
 
 int rebre(int fd, int *dades, int quantitat) {
-    uint32_t enter = 0;
+    int enter = 0;
     int i = 0;
 
     for (i = 0; i < quantitat; i++) {
         if (transferir(fd, &enter, sizeof(enter), 0) < 0) {
             return -1;
         }
-        dades[i] = (int32_t)ntohl(enter);
+        dades[i] = ntohl(enter);
     }
     return 0;
 }
 
-int enviar_estat(int fd, const Estat *estat) {
+int enviar_estat(int fd, Estat *estat) {
     if (enviar(fd, &estat->versio, 1) < 0) {
         return -1;
     }
@@ -117,7 +117,7 @@ int rebre_estat(int fd, Estat *estat) {
     return rebre(fd, estat->lectures, MAX_OPERACIONS);
 }
 
-int demanar(int node, const Peticio *p, Estat *estat) {
+int demanar(int node, Peticio *p, Estat *estat) {
     int fd = connectar(PORT_BASE + node), resultat = -1, i = 0;
     int cap[3] = {p->tipus, p->node, p->quantitat};
 

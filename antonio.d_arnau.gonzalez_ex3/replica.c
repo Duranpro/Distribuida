@@ -18,7 +18,7 @@ typedef struct {
     FILE *log;
 } Replica;
 
-int guardar(FILE *log, const Estat *estat) {
+int guardar(FILE *log, Estat *estat) {
     int i = 0;
 
     if (fprintf(log, "Versio %d · escriptures %d", estat->versio, estat->escriptures) < 0) {
@@ -36,7 +36,7 @@ int guardar(FILE *log, const Estat *estat) {
 }
 
 /* Diccionari senzill de parelles clau-valor, amb cerca lineal. */
-int buscar(const Estat *estat, int clau) {
+int buscar(Estat *estat, int clau) {
     int i = 0;
 
     while (i < estat->quantitat && estat->claus[i] != clau) {
@@ -45,7 +45,7 @@ int buscar(const Estat *estat, int clau) {
     return i;
 }
 
-int executar(Estat *estat, const Peticio *p) {
+int executar(Estat *estat, Peticio *p) {
     int i = 0, pos = 0, escriptures = 0;
 
     memset(estat->lectures, 0, sizeof(estat->lectures));
@@ -75,7 +75,7 @@ int executar(Estat *estat, const Peticio *p) {
     return escriptures;
 }
 
-int copiar(int node, const Estat *estat) {
+int copiar(int node, Estat *estat) {
     int fd = connectar(PORT_BASE + node), resultat = -1;
     int cap[3] = {COPIAR, 0, 0};
 
