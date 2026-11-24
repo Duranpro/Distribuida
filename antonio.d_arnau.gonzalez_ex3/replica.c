@@ -12,7 +12,9 @@
 #include <unistd.h>
 
 typedef struct {
-    int node, servidor, testimoni, actiu;
+    int node, servidor, actiu;
+    int rellotge, instant_peticio, dins;
+    int pendents[NODES_A], diferides[NODES_A];
     int cua[FD_SETSIZE], inici, quantitat;
     Estat estat;
     FILE *log;
@@ -99,8 +101,7 @@ int distribuir(int node) {
     return demanar(node, &p, &resposta);
 }
 
-/* El socket queda obert mentre el coordinador utilitza el testimoni.
-   En tancar-lo, el pare sap que pot cedir el torn. */
+/* El coordinador avisa el seu node que surt de la seccio critica tancant el socket. */
 int entrar(int node) {
     int fd = connectar(PORT_BASE + node), confirmacio = -1;
     int cap[3] = {ENTRAR, node, 0};
@@ -127,7 +128,7 @@ int coordinar(int fd, int node, Peticio *p) {
     int permis = -1, i = 0, escriptures = 0, resultat = -1, desti = 0;
 
     desti = node;
-    if (node >= 3) {
+    if (node >= NODES_A) {
         desti = 0;
     }
     permis = entrar(desti);
@@ -140,7 +141,7 @@ int coordinar(int fd, int node, Peticio *p) {
     }
     local = inicial;
     escriptures = executar(&local, p);
-    if (escriptures >= 0 && (escriptures == 0 || node < 3)) {
+    if (escriptures >= 0 && (escriptures == 0 || node < NODES_A)) {
         p->tipus = APLICAR;
         resultat = 0;
         if (escriptures == 0) {
@@ -149,8 +150,8 @@ int coordinar(int fd, int node, Peticio *p) {
             }
         } else {
             /* El receptor coordina i espera l'execucio de tots tres A. */
-            for (i = 0; i < 3 && resultat == 0; i++) {
-                desti = (node + i) % 3;
+            for (i = 0; i < NODES_A && resultat == 0; i++) {
+                desti = (node + i) % NODES_A;
                 if (demanar(desti, p, &resposta) < 0 ||
                     resposta.versio != local.versio ||
                     resposta.escriptures != local.escriptures ||
@@ -249,6 +250,73 @@ void tancar_heretats(int conservar) {
     }
 }
 
+void acabar_peticio(Replica *r) {
+    int i = 0, permis = 0;
+
+    close(r->actiu);
+    r->actiu = -1;
+    r->dins = 0;
+    for (i = 0; i < NODES_A; i++) {
+        if (r->pendents[i] >= 0) {
+            close(r->pendents[i]);
+            r->pendents[i] = -1;
+        }
+        if (r->diferides[i] >= 0) {
+            enviar(r->diferides[i], &permis, 1);
+            close(r->diferides[i]);
+            r->diferides[i] = -1;
+        }
+    }
+}
+
+void iniciar_peticio(Replica *r) {
+    int i = 0, fd = -1;
+    int cap[4] = {DEMANAR_PERMIS, r->node, 0, ++r->rellotge};
+
+    r->actiu = r->cua[r->inici];
+    r->inici = (r->inici + 1) % FD_SETSIZE;
+    r->quantitat--;
+    r->instant_peticio = cap[3];
+    for (i = 0; i < NODES_A; i++) {
+        if (i == r->node) {
+            continue;
+        }
+        fd = connectar(PORT_BASE + i);
+        if (fd < 0 || fd >= FD_SETSIZE || enviar(fd, cap, 4) < 0) {
+            if (fd >= 0) {
+                close(fd);
+            }
+            acabar_peticio(r);
+            return;
+        }
+        /* La resposta pot arribar mes tard. El bucle select continua atenent peticions. */
+        r->pendents[i] = fd;
+    }
+}
+
+int respondre_permis(int fd, Replica *r, int origen) {
+    int instant = 0, permis = 0;
+
+    if (origen < 0 || origen >= NODES_A || origen == r->node ||
+        rebre(fd, &instant, 1) < 0 || instant <= 0) {
+        return -1;
+    }
+    if (instant > r->rellotge) {
+        r->rellotge = instant;
+    }
+    r->rellotge++;
+    /* Ricart-Agrawala: prioritat per rellotge de Lamport i desempat per ID. */
+    if (r->dins || (r->actiu >= 0 &&
+        (r->instant_peticio < instant || (r->instant_peticio == instant && r->node < origen)))) {
+        if (r->diferides[origen] >= 0) {
+            close(r->diferides[origen]);
+        }
+        r->diferides[origen] = fd;
+        return 1;
+    }
+    return enviar(fd, &permis, 1);
+}
+
 int atendre(int fd, Replica *r) {
     Peticio p = {0};
     Estat copia = {0};
@@ -258,11 +326,9 @@ int atendre(int fd, Replica *r) {
     if (rebre_peticio(fd, &p) < 0) {
         return -1;
     }
-    if (p.tipus == TESTIMONI && r->node < 3) {
-        r->testimoni = 1;
-        resultat = 0;
-        enviar(fd, &resultat, 1);
-    } else if (p.tipus == ENTRAR && r->node < 3) {
+    if (p.tipus == DEMANAR_PERMIS && r->node < NODES_A) {
+        return respondre_permis(fd, r, p.node);
+    } else if (p.tipus == ENTRAR && r->node < NODES_A) {
         if (r->quantitat == FD_SETSIZE) {
             return -1;
         }
@@ -292,7 +358,7 @@ int atendre(int fd, Replica *r) {
     } else if (p.tipus == APLICAR) {
         copia = r->estat;
         escriptures = executar(&copia, &p);
-        if (escriptures < 0 || (escriptures > 0 && r->node >= 3)) {
+        if (escriptures < 0 || (escriptures > 0 && r->node >= NODES_A)) {
             return -1;
         }
         if (escriptures > 0) {
@@ -302,7 +368,7 @@ int atendre(int fd, Replica *r) {
             r->estat = copia;
         }
         enviar_estat(fd, &copia);
-    } else if (p.tipus == COPIAR && r->node >= 3) {
+    } else if (p.tipus == COPIAR && r->node >= NODES_A) {
         if (rebre_estat(fd, &copia) < 0 || copia.versio < r->estat.versio) {
             return -1;
         }
@@ -335,30 +401,14 @@ int atendre(int fd, Replica *r) {
     return 0;
 }
 
-int cedir(Replica *r) {
-    int fd = connectar(PORT_BASE + (r->node + 1) % 3), resultat = -1;
-    int cap[3] = {TESTIMONI, r->node, 0};
-
-    if (fd < 0) {
-        return -1;
-    }
-    r->testimoni = 0;
-    if (enviar(fd, cap, 3) < 0 || rebre(fd, &resultat, 1) < 0 || resultat != 0) {
-        close(fd);
-        return -2;
-    }
-    close(fd);
-    return 0;
-}
-
 int main(int argc, char **argv) {
     Replica r = {0};
     fd_set lectura;
     struct timeval espera;
     time_t proper = time(NULL) + PERIODE, ara = 0;
     pid_t periodic = 0;
-    int fd = -1, maxim = 0, resultat = 0, confirmacio = 0, i = 0;
-    char fitxer[32], fi = 0;
+    int fd = -1, maxim = 0, resultat = 0, confirmacio = 0, i = 0, faltants = 0;
+    char fitxer[32];
 
     if (argc != 2) {
         fprintf(stderr, "Ús: %s A1|A2|A3|B1|B2|C1|C2\n", argv[0]);
@@ -371,7 +421,10 @@ int main(int argc, char **argv) {
         return 1;
     }
     r.actiu = -1;
-    r.testimoni = r.node == 0;
+    for (i = 0; i < NODES_A; i++) {
+        r.pendents[i] = -1;
+        r.diferides[i] = -1;
+    }
     signal(SIGPIPE, SIG_IGN);
     r.servidor = crear_servidor(PORT_BASE + r.node);
     if (r.servidor < 0) {
@@ -414,6 +467,15 @@ int main(int argc, char **argv) {
                 maxim = r.actiu;
             }
         }
+        for (i = 0; i < NODES_A; i++) {
+            fd = r.pendents[i];
+            if (fd >= 0) {
+                FD_SET(fd, &lectura);
+                if (fd > maxim) {
+                    maxim = fd;
+                }
+            }
+        }
         espera.tv_sec = 0;
         espera.tv_usec = 100000;
         if (select(maxim + 1, &lectura, NULL, NULL, &espera) < 0) {
@@ -424,37 +486,44 @@ int main(int argc, char **argv) {
             break;
         }
         if (r.actiu >= 0 && FD_ISSET(r.actiu, &lectura)) {
-            read(r.actiu, &fi, 1);
-            close(r.actiu);
-            r.actiu = -1;
-            /* Cedeix el testimoni despres de cada transaccio. */
-            resultat = cedir(&r);
+            acabar_peticio(&r);
+        }
+        faltants = 0;
+        for (i = 0; i < NODES_A; i++) {
+            fd = r.pendents[i];
+            if (fd >= 0 && FD_ISSET(fd, &lectura)) {
+                if (rebre(fd, &confirmacio, 1) < 0 || confirmacio != 0) {
+                    acabar_peticio(&r);
+                    break;
+                }
+                close(fd);
+                r.pendents[i] = -1;
+            }
+            faltants += r.pendents[i] >= 0;
+        }
+        if (r.actiu >= 0 && !r.dins && faltants == 0) {
+            r.dins = 1;
+            if (enviar(r.actiu, &confirmacio, 1) < 0) {
+                acabar_peticio(&r);
+            }
         }
         if (FD_ISSET(r.servidor, &lectura)) {
             fd = accept(r.servidor, NULL, NULL);
-            if (fd >= 0) {
+            if (fd >= FD_SETSIZE) {
+                close(fd);
+            } else if (fd >= 0) {
                 resultat = atendre(fd, &r);
                 if (resultat != 1) {
                     close(fd);
                 }
             }
         }
-        if (r.node < 3 && r.testimoni && r.actiu < 0) {
-            if (r.quantitat > 0) {
-                r.actiu = r.cua[r.inici];
-                r.inici = (r.inici + 1) % FD_SETSIZE;
-                r.quantitat--;
-                if (enviar(r.actiu, &confirmacio, 1) < 0) {
-                    close(r.actiu);
-                    r.actiu = -1;
-                }
-            } else {
-                resultat = cedir(&r);
-            }
+        if (resultat != -2 && r.actiu < 0 && r.quantitat > 0) {
+            iniciar_peticio(&r);
         }
     }
     if (r.actiu >= 0) {
-        close(r.actiu);
+        acabar_peticio(&r);
     }
     for (i = 0; i < r.quantitat; i++) {
         close(r.cua[(r.inici + i) % FD_SETSIZE]);
