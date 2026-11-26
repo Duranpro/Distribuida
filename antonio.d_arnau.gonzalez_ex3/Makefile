@@ -32,5 +32,3 @@ web: web.o xarxa.o websocket.o
 
 clean:
 	rm -f websocket.o replica.o client.o web.o xarxa.o iniciar.o replica client web iniciar
-
-.PHONY: all clean

@@ -9,6 +9,9 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+/* Marge per node i per parella d'enters de 32 bits, incloent el signe i els separadors. */
+#define CAPACITAT_JSON (3 + NODES * (40 + POSICIONS * 26))
+
 int escriure(int fd, void *dades, int mida) {
     char *pos = dades;
     int n = 0;
@@ -40,11 +43,11 @@ int trama(int fd, char *text) {
     return escriure(fd, text, mida);
 }
 
-void estat_json(char *text, int capacitat) {
+int estat_json(char *text, int capacitat) {
     Estat estats[NODES] = {0};
-    int node = 0, clau = 0, primer = 0, fd = connectar(PORT_BASE);
+    int node = 0, clau = 0, fd = connectar(PORT_BASE);
     int cap[3] = {MONITOR, 0, 0};
-    int usats = 0;
+    int usats = 0, mida = 0;
 
     if (fd >= 0 && enviar(fd, cap, 3) == 0) {
         while (node < NODES && rebre_estat(fd, &estats[node]) == 0) {
@@ -53,35 +56,38 @@ void estat_json(char *text, int capacitat) {
     }
     if (fd >= 0) close(fd);
     if (node != NODES) {
-        snprintf(text, capacitat, "{\"error\":\"Rèpliques no disponibles\"}");
-        return;
+        mida = snprintf(text, capacitat, "{\"error\":\"Rèpliques no disponibles\"}");
+        return mida < 0 || mida >= capacitat ? -1 : 0;
     }
-    text[usats++] = '{';
     for (node = 0; node < NODES; node++) {
-        if (node > 0) {
-            text[usats++] = ',';
+        mida = snprintf(text + usats, capacitat - usats,
+                "%c\"%s\":{\"version\":%d,\"data\":{",
+                node == 0 ? '{' : ',', noms[node], estats[node].versio);
+        if (mida < 0 || mida >= capacitat - usats) {
+            return -1;
         }
-        usats += snprintf(text + usats, capacitat - usats,
-                "\"%s\":{\"version\":%d,\"data\":{",
-                noms[node], estats[node].versio);
-        primer = 1;
+        usats += mida;
         for (clau = 0; clau < estats[node].quantitat; clau++) {
-            if (!primer) {
-                text[usats++] = ',';
+            mida = snprintf(text + usats, capacitat - usats, "%s\"%d\":%d",
+                    clau == 0 ? "" : ",", estats[node].claus[clau], estats[node].valors[clau]);
+            if (mida < 0 || mida >= capacitat - usats) {
+                return -1;
             }
-            usats += snprintf(text + usats, capacitat - usats,
-                    "\"%d\":%d", estats[node].claus[clau], estats[node].valors[clau]);
-            primer = 0;
+            usats += mida;
+        }
+        if (capacitat - usats < 4) {
+            return -1;
         }
         text[usats++] = '}';
         text[usats++] = '}';
     }
     text[usats++] = '}';
     text[usats] = '\0';
+    return 0;
 }
 
 void monitor(int fd, char *key) {
-    char acceptacio[29], resposta[200], text[16000], anterior[16000] = "";
+    char acceptacio[29], resposta[200], text[CAPACITAT_JSON], anterior[CAPACITAT_JSON] = "";
     int mida = 0;
     fd_set lectura;
     struct timeval espera;
@@ -94,7 +100,9 @@ void monitor(int fd, char *key) {
         return;
     }
     while (1) {
-        estat_json(text, sizeof(text));
+        if (estat_json(text, sizeof(text)) < 0) {
+            strcpy(text, "{\"error\":\"Estat massa gran\"}");
+        }
         if (strcmp(text, anterior) != 0) {
             if (trama(fd, text) < 0) {
                 return;
