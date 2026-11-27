@@ -67,7 +67,7 @@ int enviar(int fd, int *dades, int quantitat) {
     int i = 0;
 
     for (i = 0; i < quantitat; i++) {
-        enter = htonl(dades[i]); //revisar
+        enter = htonl(dades[i]);
         if (transferir(fd, &enter, sizeof(enter), 1) < 0) {
             return -1;
         }
@@ -83,7 +83,7 @@ int rebre(int fd, int *dades, int quantitat) {
         if (transferir(fd, &enter, sizeof(enter), 0) < 0) {
             return -1;
         }
-        dades[i] = ntohl(enter); //revisar
+        dades[i] = ntohl(enter);
     }
     return 0;
 }
