@@ -32,7 +32,9 @@ function connect() {
         element('h3', name, card);
         element('p', 'Versió ' + state[name].version, card);
         const pairs = Object.entries(state[name].data);
-        element('pre', pairs.length ? pairs.map(([k, v]) => k + ' → ' + v).join('\n') : 'Valors inicials: 0', card);
+        let values = 'Valors inicials: 0';
+        if (pairs.length) values = pairs.map(([k, v]) => k + ' → ' + v).join('\n');
+        element('pre', values, card);
       }
     }
   };

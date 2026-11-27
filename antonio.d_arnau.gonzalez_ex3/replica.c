@@ -440,7 +440,8 @@ int main(int argc, char **argv) {
         if (r.node == 4 && ara >= proper) {
             /* Un sol treballador periodic per evitar acumular temporitzadors. */
             if (periodic < 0 && pipe(avis) == 0) {
-                fill_periodic = avis[0] < FD_SETSIZE && avis[1] < FD_SETSIZE ? fork() : -1;
+                fill_periodic = -1;
+                if (avis[0] < FD_SETSIZE && avis[1] < FD_SETSIZE) fill_periodic = fork();
                 if (fill_periodic == 0) {
                     /* En acabar, el pare detectara el tancament de la canonada. */
                     tancar_heretats(avis[1]);

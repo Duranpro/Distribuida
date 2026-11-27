@@ -48,6 +48,8 @@ int estat_json(char *text, int capacitat) {
     int node = 0, clau = 0, fd = connectar(PORT_BASE);
     int cap[3] = {MONITOR, 0, 0};
     int usats = 0, mida = 0;
+    char separador_node = '{';
+    const char *separador_clau = "";
 
     if (fd >= 0 && enviar(fd, cap, 3) == 0) {
         while (node < NODES && rebre_estat(fd, &estats[node]) == 0) {
@@ -57,23 +59,24 @@ int estat_json(char *text, int capacitat) {
     if (fd >= 0) close(fd);
     if (node != NODES) {
         mida = snprintf(text, capacitat, "{\"error\":\"Rèpliques no disponibles\"}");
-        return mida < 0 || mida >= capacitat ? -1 : 0;
+        if (mida < 0 || mida >= capacitat) return -1;
+        return 0;
     }
     for (node = 0; node < NODES; node++) {
-        mida = snprintf(text + usats, capacitat - usats,
-                "%c\"%s\":{\"version\":%d,\"data\":{",
-                node == 0 ? '{' : ',', noms[node], estats[node].versio);
+        mida = snprintf(text + usats, capacitat - usats, "%c\"%s\":{\"version\":%d,\"data\":{", separador_node, noms[node], estats[node].versio);
         if (mida < 0 || mida >= capacitat - usats) {
             return -1;
         }
         usats += mida;
+        separador_node = ',';
+        separador_clau = "";
         for (clau = 0; clau < estats[node].quantitat; clau++) {
-            mida = snprintf(text + usats, capacitat - usats, "%s\"%d\":%d",
-                    clau == 0 ? "" : ",", estats[node].claus[clau], estats[node].valors[clau]);
+            mida = snprintf(text + usats, capacitat - usats, "%s\"%d\":%d", separador_clau, estats[node].claus[clau], estats[node].valors[clau]);
             if (mida < 0 || mida >= capacitat - usats) {
                 return -1;
             }
             usats += mida;
+            separador_clau = ",";
         }
         if (capacitat - usats < 4) {
             return -1;
@@ -93,9 +96,7 @@ void monitor(int fd, char *key) {
     struct timeval espera;
 
     acceptar_websocket(key, acceptacio);
-    mida = snprintf(resposta, sizeof(resposta), "HTTP/1.1 101 Switching Protocols\r\n"
-                    "Upgrade: websocket\r\nConnection: Upgrade\r\n"
-                    "Sec-WebSocket-Accept: %s\r\n\r\n", acceptacio);
+    mida = snprintf(resposta, sizeof(resposta), "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n", acceptacio);
     if (escriure(fd, resposta, mida) < 0) {
         return;
     }
@@ -128,9 +129,7 @@ void servir_fitxer(int fd, char *nom, char *tipus) {
     if (!fitxer) {
         return;
     }
-    mida_cap = snprintf(cap, sizeof(cap),
-                        "HTTP/1.1 200 OK\r\nContent-Type: %s; charset=utf-8\r\n"
-                        "Connection: close\r\n\r\n", tipus);
+    mida_cap = snprintf(cap, sizeof(cap), "HTTP/1.1 200 OK\r\nContent-Type: %s; charset=utf-8\r\nConnection: close\r\n\r\n", tipus);
     if (escriure(fd, cap, mida_cap) == 0) {
         while ((mida = fread(dades, 1, sizeof(dades), fitxer)) > 0) {
             if (escriure(fd, dades, mida) < 0) {
