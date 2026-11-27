@@ -1,7 +1,6 @@
-#define _POSIX_C_SOURCE 200809L
+#define _GNU_SOURCE
 #include "comu.h"
 #include <errno.h>
-#include <fcntl.h>
 #include <signal.h>
 #include <stdio.h>
 #include <sys/wait.h>
@@ -13,7 +12,8 @@ void avisar(int senyal) {
     unsigned char avis = senyal;
     int error = errno;
 
-    /* Si la canonada es plena, ja hi ha avisos pendents d'aturada. */
+    /* Cada senyal nomes ha d'avisar una vegada. */
+    signal(senyal, SIG_IGN);
     while (write(avisos[1], &avis, sizeof(avis)) < 0 && errno == EINTR) {
         continue;
     }
@@ -22,7 +22,6 @@ void avisar(int senyal) {
 
 int main(void) {
     pid_t fills[NODES + 1] = {0};
-    struct sigaction accio = {0};
     unsigned char senyal = 0;
     ssize_t llegits = 0;
     int i = 0, error = 0;
@@ -33,15 +32,8 @@ int main(void) {
         perror("pipe");
         return 1;
     }
-    if (fcntl(avisos[1], F_SETFL, O_NONBLOCK) < 0) {
-        perror("fcntl");
-        return 1;
-    }
-    accio.sa_handler = avisar;
-    accio.sa_flags = SA_NOCLDSTOP;
-    sigemptyset(&accio.sa_mask);
-    if (sigaction(SIGINT, &accio, NULL) < 0 || sigaction(SIGTERM, &accio, NULL) < 0 || sigaction(SIGCHLD, &accio, NULL) < 0) {
-        perror("sigaction");
+    if (signal(SIGINT, avisar) == SIG_ERR || signal(SIGTERM, avisar) == SIG_ERR) {
+        perror("signal");
         return 1;
     }
 
@@ -53,6 +45,8 @@ int main(void) {
             break;
         }
         if (fills[i] == 0) {
+            signal(SIGINT, SIG_DFL);
+            signal(SIGTERM, SIG_DFL);
             close(avisos[1]);
             close(avisos[0]);
             if (i == NODES) {
@@ -70,8 +64,7 @@ int main(void) {
         do {
             llegits = read(avisos[0], &senyal, sizeof(senyal));
         } while (llegits < 0 && errno == EINTR);
-        /* Si un servidor acaba, aturem la resta i indiquem l'error. */
-        error = llegits != sizeof(senyal) || senyal == SIGCHLD;
+        error = llegits != sizeof(senyal);
     }
     for (i = 0; i <= NODES; i++) {
         if (fills[i] > 0) {

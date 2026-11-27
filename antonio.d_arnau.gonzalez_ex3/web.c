@@ -179,6 +179,7 @@ void atendre(int fd) {
 int main(void) {
     int servidor = crear_servidor(PORT_WEB), fd = -1;
     pid_t fill = 0;
+    char missatge[64];
 
     if (servidor < 0) {
         perror("Monitor");
@@ -186,8 +187,8 @@ int main(void) {
     }
     signal(SIGPIPE, SIG_IGN);
     signal(SIGCHLD, SIG_IGN);
-    printf("Monitor: http://127.0.0.1:%d\n", PORT_WEB);
-    fflush(stdout);
+    snprintf(missatge, sizeof(missatge), "Monitor: http://127.0.0.1:%d\n", PORT_WEB);
+    escriure(STDOUT_FILENO, missatge, strlen(missatge));
     while (1) {
         fd = accept(servidor, NULL, NULL);
         if (fd < 0) {

@@ -7,7 +7,6 @@
 #include <string.h>
 #include <sys/select.h>
 #include <sys/socket.h>
-#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -17,24 +16,31 @@ typedef struct {
     int pendents[NODES_A], diferides[NODES_A];
     int cua[FD_SETSIZE], inici, quantitat;
     Estat estat;
-    FILE *log;
+    char fitxer[32];
 } Replica;
 
-int guardar(FILE *log, Estat *estat) {
-    int i = 0;
+int guardar(char *fitxer, char *mode, Estat *estat) {
+    FILE *log = fopen(fitxer, mode);
+    int i = 0, resultat = 0;
 
-    if (fprintf(log, "Versio %d · escriptures %d", estat->versio, estat->escriptures) < 0) {
+    if (!log) {
         return -1;
     }
-    for (i = 0; i < estat->quantitat; i++) {
+    if (fprintf(log, "Versio %d · escriptures %d", estat->versio, estat->escriptures) < 0) {
+        resultat = -1;
+    }
+    for (i = 0; i < estat->quantitat && resultat == 0; i++) {
         if (fprintf(log, " %d=%d", estat->claus[i], estat->valors[i]) < 0) {
-            return -1;
+            resultat = -1;
         }
     }
-    if (fputc('\n', log) == EOF || fflush(log) == EOF) {
-        return -1;
+    if (resultat == 0 && fprintf(log, "\n") < 0) {
+        resultat = -1;
     }
-    return 0;
+    if (fclose(log) == EOF) {
+        resultat = -1;
+    }
+    return resultat;
 }
 
 /* Diccionari senzill de parelles clau-valor, amb cerca lineal. */
@@ -351,7 +357,7 @@ int atendre(int fd, Replica *r) {
             return -1;
         }
         if (escriptures > 0) {
-            if (guardar(r->log, &copia) < 0) {
+            if (guardar(r->fitxer, "a", &copia) < 0) {
                 return -2;
             }
             r->estat = copia;
@@ -363,7 +369,7 @@ int atendre(int fd, Replica *r) {
         }
         resultat = 0;
         if (copia.versio > r->estat.versio) {
-            if (guardar(r->log, &copia) < 0) {
+            if (guardar(r->fitxer, "a", &copia) < 0) {
                 return -2;
             }
             r->estat = copia;
@@ -395,9 +401,10 @@ int main(int argc, char **argv) {
     fd_set lectura;
     struct timeval espera;
     time_t proper = time(NULL) + PERIODE, ara = 0;
-    pid_t periodic = 0;
+    pid_t fill_periodic = 0;
+    int avis[2], periodic = -1;
     int fd = -1, maxim = 0, resultat = 0, confirmacio = 0, i = 0, faltants = 0;
-    char fitxer[32];
+    char missatge[32];
 
     if (argc != 2) {
         fprintf(stderr, "Ús: %s A1|A2|A3|B1|B2|C1|C2\n", argv[0]);
@@ -415,34 +422,39 @@ int main(int argc, char **argv) {
         r.diferides[i] = -1;
     }
     signal(SIGPIPE, SIG_IGN);
+    signal(SIGCHLD, SIG_IGN);
     r.servidor = crear_servidor(PORT_BASE + r.node);
     if (r.servidor < 0) {
         perror("Servidor");
         return 1;
     }
-    snprintf(fitxer, sizeof(fitxer), "%s.txt", noms[r.node]);
-    r.log = fopen(fitxer, "w");
-    if (!r.log || guardar(r.log, &r.estat) < 0) {
+    snprintf(r.fitxer, sizeof(r.fitxer), "%s.txt", noms[r.node]);
+    if (guardar(r.fitxer, "w", &r.estat) < 0) {
         resultat = -2;
+    } else {
+        snprintf(missatge, sizeof(missatge), "%s preparat\n", noms[r.node]);
+        write(STDOUT_FILENO, missatge, strlen(missatge));
     }
-    printf("%s preparat\n", noms[r.node]);
-    fflush(stdout);
     while (resultat != -2) {
-        while (waitpid(-1, NULL, WNOHANG) > 0) {
-            continue;
-        }
         ara = time(NULL);
         if (r.node == 4 && ara >= proper) {
             /* Un sol treballador periodic per evitar acumular temporitzadors. */
-            if (periodic <= 0 || (waitpid(periodic, NULL, WNOHANG) < 0 && errno == ECHILD)) {
-                periodic = fork();
-                if (periodic == 0) {
-                    tancar_heretats(-1);
+            if (periodic < 0 && pipe(avis) == 0) {
+                fill_periodic = avis[0] < FD_SETSIZE && avis[1] < FD_SETSIZE ? fork() : -1;
+                if (fill_periodic == 0) {
+                    /* En acabar, el pare detectara el tancament de la canonada. */
+                    tancar_heretats(avis[1]);
                     resultat = propagar();
                     if (resultat < 0) {
                         _exit(1);
                     }
                     _exit(0);
+                }
+                close(avis[1]);
+                if (fill_periodic > 0) {
+                    periodic = avis[0];
+                } else {
+                    close(avis[0]);
                 }
             }
             proper = ara + PERIODE;
@@ -450,6 +462,12 @@ int main(int argc, char **argv) {
         FD_ZERO(&lectura);
         FD_SET(r.servidor, &lectura);
         maxim = r.servidor;
+        if (periodic >= 0) {
+            FD_SET(periodic, &lectura);
+            if (periodic > maxim) {
+                maxim = periodic;
+            }
+        }
         if (r.actiu >= 0) {
             FD_SET(r.actiu, &lectura);
             if (r.actiu > maxim) {
@@ -476,6 +494,10 @@ int main(int argc, char **argv) {
         }
         if (r.actiu >= 0 && FD_ISSET(r.actiu, &lectura)) {
             acabar_peticio(&r);
+        }
+        if (periodic >= 0 && FD_ISSET(periodic, &lectura)) {
+            close(periodic);
+            periodic = -1;
         }
         faltants = 0;
         for (i = 0; i < NODES_A; i++) {
@@ -514,11 +536,11 @@ int main(int argc, char **argv) {
     if (r.actiu >= 0) {
         acabar_peticio(&r);
     }
+    if (periodic >= 0) {
+        close(periodic);
+    }
     for (i = 0; i < r.quantitat; i++) {
         close(r.cua[(r.inici + i) % FD_SETSIZE]);
-    }
-    if (r.log) {
-        fclose(r.log);
     }
     close(r.servidor);
     return 1;
