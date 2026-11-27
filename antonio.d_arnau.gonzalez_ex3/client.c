@@ -1,4 +1,5 @@
 #include "comu.h"
+#include <errno.h>
 #include <limits.h>
 #include <signal.h>
 #include <stdio.h>
@@ -110,15 +111,21 @@ int main(int argc, char **argv) {
         perror(argv[1]);
         return 1;
     }
-    while (fgets(linia, sizeof(linia), fitxer)) {
+    while (1) {
+        errno = 0;
+        if (!fgets(linia, sizeof(linia), fitxer)) {
+            if (errno != 0) {
+                perror(argv[1]);
+                error = 1;
+            }
+            break;
+        }
         numero++;
         if (linia[strspn(linia, " \t\r\n")] == '\0') {
             continue;
         }
         p.quantitat = 0;
-        if ((!strchr(linia, '\n') && strlen(linia) == sizeof(linia) - 1) ||
-            llegir_transaccio(linia, nucli, &p) < 0 ||
-            demanar(p.node, &p, &estat) < 0) {
+        if ((!strchr(linia, '\n') && strlen(linia) == sizeof(linia) - 1) || llegir_transaccio(linia, nucli, &p) < 0 || demanar(p.node, &p, &estat) < 0) {
             fprintf(stderr, "Error a la transacció de la línia %d\n", numero);
             error = 1;
             break;
@@ -130,9 +137,6 @@ int main(int argc, char **argv) {
 
         }
         putchar('\n');
-    }
-    if (ferror(fitxer)) {
-        error = 1;
     }
     fclose(fitxer);
     return error;

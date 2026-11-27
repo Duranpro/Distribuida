@@ -67,7 +67,7 @@ int enviar(int fd, int *dades, int quantitat) {
     int i = 0;
 
     for (i = 0; i < quantitat; i++) {
-        enter = htonl(dades[i]);
+        enter = htonl(dades[i]); //revisar
         if (transferir(fd, &enter, sizeof(enter), 1) < 0) {
             return -1;
         }
@@ -83,7 +83,7 @@ int rebre(int fd, int *dades, int quantitat) {
         if (transferir(fd, &enter, sizeof(enter), 0) < 0) {
             return -1;
         }
-        dades[i] = ntohl(enter);
+        dades[i] = ntohl(enter); //revisar
     }
     return 0;
 }
@@ -92,11 +92,7 @@ int enviar_estat(int fd, Estat *estat) {
     if (enviar(fd, &estat->versio, 1) < 0) {
         return -1;
     }
-    if (enviar(fd, &estat->quantitat, 1) < 0 ||
-        enviar(fd, &estat->escriptures, 1) < 0 ||
-        enviar(fd, &estat->ultima, 1) < 0 ||
-        enviar(fd, estat->claus, estat->quantitat) < 0 ||
-        enviar(fd, estat->valors, estat->quantitat) < 0) {
+    if (enviar(fd, &estat->quantitat, 1) < 0 || enviar(fd, &estat->escriptures, 1) < 0 || enviar(fd, &estat->ultima, 1) < 0 || enviar(fd, estat->claus, estat->quantitat) < 0 || enviar(fd, estat->valors, estat->quantitat) < 0) {
         return -1;
     }
     return enviar(fd, estat->lectures, MAX_OPERACIONS);
@@ -106,12 +102,7 @@ int rebre_estat(int fd, Estat *estat) {
     if (rebre(fd, &estat->versio, 1) < 0 || estat->versio < 0) {
         return -1;
     }
-    if (rebre(fd, &estat->quantitat, 1) < 0 ||
-        estat->quantitat < 0 || estat->quantitat > POSICIONS ||
-        rebre(fd, &estat->escriptures, 1) < 0 ||
-        rebre(fd, &estat->ultima, 1) < 0 ||
-        rebre(fd, estat->claus, estat->quantitat) < 0 ||
-        rebre(fd, estat->valors, estat->quantitat) < 0) {
+    if (rebre(fd, &estat->quantitat, 1) < 0 || estat->quantitat < 0 || estat->quantitat > POSICIONS || rebre(fd, &estat->escriptures, 1) < 0 || rebre(fd, &estat->ultima, 1) < 0 || rebre(fd, estat->claus, estat->quantitat) < 0 || rebre(fd, estat->valors, estat->quantitat) < 0) {
         return -1;
     }
     return rebre(fd, estat->lectures, MAX_OPERACIONS);

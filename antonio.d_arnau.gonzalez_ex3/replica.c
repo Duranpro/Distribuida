@@ -152,18 +152,11 @@ int coordinar(int fd, int node, Peticio *p) {
             /* El receptor coordina i espera l'execucio de tots tres A. */
             for (i = 0; i < NODES_A && resultat == 0; i++) {
                 desti = (node + i) % NODES_A;
-                if (demanar(desti, p, &resposta) < 0 ||
-                    resposta.versio != local.versio ||
-                    resposta.escriptures != local.escriptures ||
-                    resposta.quantitat != local.quantitat ||
-                    memcmp(resposta.claus, local.claus, local.quantitat * sizeof(int)) != 0 ||
-                    memcmp(resposta.valors, local.valors, local.quantitat * sizeof(int)) != 0 ||
-                    memcmp(resposta.lectures, local.lectures, sizeof(local.lectures)) != 0) {
+                if (demanar(desti, p, &resposta) < 0 || resposta.versio != local.versio || resposta.escriptures != local.escriptures || resposta.quantitat != local.quantitat || memcmp(resposta.claus, local.claus, local.quantitat * sizeof(int)) != 0 || memcmp(resposta.valors, local.valors, local.quantitat * sizeof(int)) != 0 || memcmp(resposta.lectures, local.lectures, sizeof(local.lectures)) != 0) {
                     resultat = -1;
                 }
             }
-            if (resultat == 0 &&
-                inicial.escriptures / PERIODE != local.escriptures / PERIODE) {
+            if (resultat == 0 && inicial.escriptures / PERIODE != local.escriptures / PERIODE) {
                 if (distribuir(1) < 0 || distribuir(2) < 0) {
                     resultat = -1;
                 }
@@ -231,9 +224,7 @@ int rebre_peticio(int fd, Peticio *p) {
     p->node = cap[1];
     p->quantitat = cap[2];
     for (i = 0; i < p->quantitat; i++) {
-        if (rebre(fd, p->operacions[i], 3) < 0 ||
-            (p->operacions[i][0] != LECTURA && p->operacions[i][0] != ESCRIPTURA) ||
-            p->operacions[i][1] < 0) {
+        if (rebre(fd, p->operacions[i], 3) < 0 || (p->operacions[i][0] != LECTURA && p->operacions[i][0] != ESCRIPTURA) || p->operacions[i][1] < 0) {
             return -1;
         }
     }
@@ -297,8 +288,7 @@ void iniciar_peticio(Replica *r) {
 int respondre_permis(int fd, Replica *r, int origen) {
     int instant = 0, permis = 0;
 
-    if (origen < 0 || origen >= NODES_A || origen == r->node ||
-        rebre(fd, &instant, 1) < 0 || instant <= 0) {
+    if (origen < 0 || origen >= NODES_A || origen == r->node || rebre(fd, &instant, 1) < 0 || instant <= 0) {
         return -1;
     }
     if (instant > r->rellotge) {
@@ -306,8 +296,7 @@ int respondre_permis(int fd, Replica *r, int origen) {
     }
     r->rellotge++;
     /* Ricart-Agrawala: prioritat per rellotge de Lamport i desempat per ID. */
-    if (r->dins || (r->actiu >= 0 &&
-        (r->instant_peticio < instant || (r->instant_peticio == instant && r->node < origen)))) {
+    if (r->dins || (r->actiu >= 0 && (r->instant_peticio < instant || (r->instant_peticio == instant && r->node < origen)))) {
         if (r->diferides[origen] >= 0) {
             close(r->diferides[origen]);
         }

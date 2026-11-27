@@ -30,10 +30,7 @@ void acceptar_websocket(char *clau, char resposta[29]) {
     for (bloc = 0; bloc < 2; bloc++) {
         for (i = 0; i < 16; i++) {
             pos = bloc * 64 + i * 4;
-            w[i] = ((uint32_t)dades[pos] << 24) |
-                   ((uint32_t)dades[pos + 1] << 16) |
-                   ((uint32_t)dades[pos + 2] << 8) |
-                   (uint32_t)dades[pos + 3];
+            w[i] = ((uint32_t)dades[pos] << 24) | ((uint32_t)dades[pos + 1] << 16) | ((uint32_t)dades[pos + 2] << 8) | (uint32_t)dades[pos + 3];
         }
         for (i = 16; i < 80; i++) {
             w[i] = rotar(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
@@ -75,8 +72,7 @@ void acceptar_websocket(char *clau, char resposta[29]) {
     }
     /* Codificacio Base64 dels 20 bytes del resum. */
     for (i = 0; i < 18; i += 3) {
-        grup = ((uint32_t)resum[i] << 16) |
-               ((uint32_t)resum[i + 1] << 8) | resum[i + 2];
+        grup = ((uint32_t)resum[i] << 16) | ((uint32_t)resum[i + 1] << 8) | resum[i + 2];
         resposta[sortida++] = alphabet[(grup >> 18) & 63];
         resposta[sortida++] = alphabet[(grup >> 12) & 63];
         resposta[sortida++] = alphabet[(grup >> 6) & 63];

@@ -6,28 +6,23 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-volatile sig_atomic_t aturar = 0;
-
-void demanar_aturada(int senyal) {
-    (void)senyal;
-    aturar = 1;
-}
-
 int main(void) {
     pid_t fills[NODES + 1] = {0};
-    struct sigaction accio = {0};
-    int i = 0, error = 0;
+    sigset_t senyals, anterior;
+    int i = 0, error = 0, senyal = 0;
     char *args_replica[] = {"./replica", NULL, NULL};
     char *args_web[] = {"./web", NULL};
 
-    accio.sa_handler = demanar_aturada;
-    sigemptyset(&accio.sa_mask);
-    if (sigaction(SIGINT, &accio, NULL) < 0 || sigaction(SIGTERM, &accio, NULL) < 0) {
-        perror("sigaction");
+    sigemptyset(&senyals);
+    sigaddset(&senyals, SIGINT);
+    sigaddset(&senyals, SIGTERM);
+    sigaddset(&senyals, SIGCHLD);
+    if (sigprocmask(SIG_BLOCK, &senyals, &anterior) < 0) {
+        perror("sigprocmask");
         return 1;
     }
 
-    for (i = 0; i <= NODES && !aturar; i++) {
+    for (i = 0; i <= NODES; i++) {
         fills[i] = fork();
         if (fills[i] < 0) {
             perror("fork");
@@ -35,6 +30,10 @@ int main(void) {
             break;
         }
         if (fills[i] == 0) {
+            if (sigprocmask(SIG_SETMASK, &anterior, NULL) < 0) {
+                perror("sigprocmask");
+                _exit(1);
+            }
             if (i == NODES) {
                 execv(args_web[0], args_web);
             } else {
@@ -46,9 +45,13 @@ int main(void) {
         }
     }
 
-    if (!error && !aturar) {
-        /* Si un servidor acaba, aturem la resta. */
-        if (wait(NULL) > 0 && !aturar) {
+    while (!error) {
+        if (sigwait(&senyals, &senyal) != 0) {
+            error = 1;
+        } else if (senyal == SIGINT || senyal == SIGTERM) {
+            break;
+        } else if (waitpid(-1, NULL, WNOHANG) != 0) {
+            /* Si un servidor acaba, aturem la resta. */
             error = 1;
         }
     }
